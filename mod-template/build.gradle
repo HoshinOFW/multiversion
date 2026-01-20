@@ -1,16 +1,13 @@
 plugins {
-     id "com.github.hoshinofw.multiversion.multiversion"
+     id "com.github.hoshinofw.multiversion.multiversion" version "0.1.0"
 }
 
-
-if (true) {
-    multiversionResources {
-        replaceProperties = [
-                "mod_license" : mod_license.toString(),
-                "mod_description" : mod_description.toString(),
-                "mod_author" : mod_author.toString()
-        ]
-    }
+multiversionResources {
+    replaceProperties = [
+            "mod_license" : mod_license.toString(),
+            "mod_description" : mod_description.toString(),
+            "mod_author" : mod_author.toString()
+    ]
 }
 
 repositories {
