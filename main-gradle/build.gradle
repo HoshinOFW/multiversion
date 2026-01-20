@@ -1,0 +1,77 @@
+plugins {
+    id "groovy"
+    id "groovy-gradle-plugin"
+    id "com.gradle.plugin-publish" version "1.3.1"
+}
+
+base {
+    group = "com.github.hoshinofw.multiversion"
+    version = "0.1.0"
+}
+
+def mainDir = projectDir.parentFile // or "mainProject.marker"
+def mod_template_libs_dir = new File(mainDir, "mod-template/libs/m2")
+
+java {
+    toolchain { languageVersion = JavaLanguageVersion.of(21) }
+}
+
+repositories {
+    mavenCentral()
+    gradlePluginPortal()
+    maven { url = "https://jitpack.io" }
+    maven {
+        name = 'NeoForged'
+        url = 'https://maven.neoforged.net/releases'
+    }
+    maven { url = 'https://maven.parchmentmc.org'} //Parchment
+    maven { url = "https://maven.architectury.dev" } // Arch
+    maven { url = "https://www.cursemaven.com" }
+    maven { url = "https://maven.fabricmc.net/"}
+    maven { url = "https://maven.minecraftforge.net/" }
+    maven { url = "https://maven.shedaniel.me/" }
+}
+
+
+dependencies {
+    implementation gradleApi()
+    implementation localGroovy()
+
+    implementation "net.fabricmc.unpick:unpick:3.0.0-beta.9"
+    implementation "net.fabricmc.unpick:unpick-format-utils:3.0.0-beta.9"
+
+    implementation "dev.architectury.loom:dev.architectury.loom.gradle.plugin:1.11-SNAPSHOT"
+    implementation "architectury-plugin:architectury-plugin.gradle.plugin:3.4-SNAPSHOT"
+    implementation "com.gradleup.shadow:com.gradleup.shadow.gradle.plugin:8.3.6"
+    implementation "org.jetbrains.gradle.plugin.idea-ext:org.jetbrains.gradle.plugin.idea-ext.gradle.plugin:1.3"
+    implementation "me.modmuss50.mod-publish-plugin:me.modmuss50.mod-publish-plugin.gradle.plugin:1.1.0"
+
+}
+
+gradlePlugin {
+    plugins {
+        multiversion {
+            id = "com.github.hoshinofw.multiversion.multiversion"
+            implementationClass = "com.github.hoshinofw.multiversion.MainMultiversionPlugin"
+            displayName = "Multiversion and Multiloader Mod Build Plugin"
+            description = "Conventions + patching + publishing helpers for multiversion Minecraft mods."
+        }
+    }
+}
+
+publishing {
+    repositories {
+        mavenLocal()
+        maven {
+            url = uri("${mod_template_libs_dir}") // adjust so it lands in root/libs/m2
+        }
+    }
+}
+
+if (false) {
+    pluginBundle {
+        website = "https://github.com/HoshinOFW/multiversion"
+        vcsUrl = "https://github.com/HoshinOFW/multiversion.git"
+        tags = ["minecraft", "multiversion", "architectury"]
+    }
+}

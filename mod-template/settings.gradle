@@ -1,0 +1,8 @@
+pluginManagement {
+    includeBuild("../settings-gradle")
+    includeBuild("../main-gradle")
+}
+
+plugins {
+    id "com.github.hoshinofw.multiversion.multiversion-settings"
+}

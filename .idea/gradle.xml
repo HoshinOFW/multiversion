@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="GradleMigrationSettings" migrationVersion="1" />
+  <component name="GradleSettings">
+    <option name="linkedExternalProjectsSettings">
+      <GradleProjectSettings>
+        <option name="externalProjectPath" value="$PROJECT_DIR$" />
+        <option name="gradleJvm" value="#JAVA_HOME" />
+        <option name="modules">
+          <set>
+            <option value="$PROJECT_DIR$" />
+          </set>
+        </option>
+      </GradleProjectSettings>
+      <GradleProjectSettings>
+        <option name="externalProjectPath" value="$PROJECT_DIR$/idea-plugin" />
+        <option name="gradleJvm" value="#JAVA_HOME" />
+        <option name="modules">
+          <set>
+            <option value="$PROJECT_DIR$/idea-plugin" />
+          </set>
+        </option>
+      </GradleProjectSettings>
+      <GradleProjectSettings>
+        <option name="externalProjectPath" value="$PROJECT_DIR$/main-gradle" />
+        <option name="gradleJvm" value="#JAVA_HOME" />
+        <option name="modules">
+          <set>
+            <option value="$PROJECT_DIR$/main-gradle" />
+          </set>
+        </option>
+      </GradleProjectSettings>
+      <GradleProjectSettings>
+        <compositeConfiguration>
+          <compositeBuild compositeDefinitionSource="SCRIPT">
+            <builds>
+              <build path="$PROJECT_DIR$/main-gradle" name="main-gradle">
+                <projects>
+                  <project path="$PROJECT_DIR$/main-gradle" />
+                </projects>
+              </build>
+              <build path="$PROJECT_DIR$/settings-gradle" name="settings-gradle">
+                <projects>
+                  <project path="$PROJECT_DIR$/settings-gradle" />
+                </projects>
+              </build>
+            </builds>
+          </compositeBuild>
+        </compositeConfiguration>
+        <option name="externalProjectPath" value="$PROJECT_DIR$/mod-template" />
+        <option name="gradleJvm" value="#JAVA_HOME" />
+        <option name="modules">
+          <set>
+            <option value="$PROJECT_DIR$/main-gradle" />
+            <option value="$PROJECT_DIR$/mod-template" />
+            <option value="$PROJECT_DIR$/mod-template/1.20.1" />
+            <option value="$PROJECT_DIR$/mod-template/1.20.1/common" />
+            <option value="$PROJECT_DIR$/mod-template/1.20.1/fabric" />
+            <option value="$PROJECT_DIR$/mod-template/1.20.1/forge" />
+            <option value="$PROJECT_DIR$/mod-template/1.21.1" />
+            <option value="$PROJECT_DIR$/mod-template/1.21.1/common" />
+            <option value="$PROJECT_DIR$/mod-template/1.21.1/fabric" />
+            <option value="$PROJECT_DIR$/mod-template/1.21.1/neoforge" />
+            <option value="$PROJECT_DIR$/settings-gradle" />
+          </set>
+        </option>
+      </GradleProjectSettings>
+      <GradleProjectSettings>
+        <option name="externalProjectPath" value="$PROJECT_DIR$/settings-gradle" />
+        <option name="gradleJvm" value="#JAVA_HOME" />
+        <option name="modules">
+          <set>
+            <option value="$PROJECT_DIR$/settings-gradle" />
+          </set>
+        </option>
+      </GradleProjectSettings>
+    </option>
+  </component>
+</project>
