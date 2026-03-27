@@ -1,9 +1,11 @@
 pluginManagement {
+    includeBuild("../settings-gradle") //Remove this
+    includeBuild("../main-gradle") //Remove this
     repositories {
         maven {url = uri("${rootDir}/libs/m2")}
     }
 }
 
 plugins {
-    id "com.github.hoshinofw.multiversion.multiversion-settings" version "0.1.0"
+    id "com.github.hoshinofw.multiversion.multiversion-settings"
 }

@@ -3,7 +3,6 @@ package com.github.hoshinofw.multiversion.idea_plugin
 import com.intellij.codeInsight.daemon.impl.HighlightInfo
 import com.intellij.codeInsight.daemon.impl.HighlightInfoFilter
 import com.intellij.lang.annotation.HighlightSeverity
-import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiFile
 import com.intellij.psi.PsiJavaFile
 import com.intellij.psi.JavaPsiFacade
@@ -13,6 +12,7 @@ class OverwriteDuplicateClassHighlightFilter : HighlightInfoFilter {
 
     companion object {
         private const val PATCHED_SEGMENT = "/build/patchedSrc/"
+        private val VERSION_DIR_REGEX = Regex("""/([0-9]+\.[0-9]+(\.[0-9]+)?)/""")
     }
 
     override fun accept(info: HighlightInfo, file: PsiFile?): Boolean {
@@ -32,21 +32,18 @@ class OverwriteDuplicateClassHighlightFilter : HighlightInfoFilter {
             val candidates = facade.findClasses(fqn, scope)
             if (candidates.size < 2) continue
 
-            val hasPatched = candidates.any { it.containingFile?.virtualFile.isPatched() }
-            if (!hasPatched) continue
+            val paths = candidates.mapNotNull { c ->
+                c.containingFile?.virtualFile?.path?.replace('\\', '/')
+            }
 
-            val hasNonPatched = candidates.any { !(it.containingFile?.virtualFile.isPatched()) }
-            if (!hasNonPatched) continue
+            val hasPatched = paths.any { p -> p.contains(PATCHED_SEGMENT) }
+            val hasNonPatched = paths.any { p -> !p.contains(PATCHED_SEGMENT) }
+            if (hasPatched && hasNonPatched) return false
 
-            return false
+            val versions = paths.mapNotNull { p -> VERSION_DIR_REGEX.find(p)?.groupValues?.get(1) }.toSet()
+            if (versions.size >= 2) return false
         }
 
         return true
-    }
-
-    private fun VirtualFile?.isPatched(): Boolean {
-        val p = this?.path ?: return false
-        val norm = p.replace('\\', '/') //Normalize between OS
-        return norm.contains(PATCHED_SEGMENT)
     }
 }

@@ -1,5 +1,5 @@
 plugins {
-     id "com.github.hoshinofw.multiversion.multiversion" version "0.1.0"
+     id "com.github.hoshinofw.multiversion.multiversion"
 }
 
 multiversionResources {
