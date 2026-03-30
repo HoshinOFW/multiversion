@@ -43,18 +43,8 @@ class MultiversionPatchedSourceGeneration {
 
             if (patchedGenTasks.isEmpty()) return
 
-            TaskProvider<Task> genAll = root.tasks.register("generateAllPatchedSrc") {
-                it.group = "build setup"
-                it.description = "Generates all patchedSrc trees for IDE sync/import."
+            root.tasks.named("generateAllPatchedSrc").configure {
                 it.dependsOn(patchedGenTasks)
-            }
-
-            root.plugins.withId("org.jetbrains.gradle.plugin.idea-ext") {
-                root.idea.project.settings {
-                    it.taskTriggers {
-                        it.beforeSync(genAll)
-                    }
-                }
             }
         }
     }

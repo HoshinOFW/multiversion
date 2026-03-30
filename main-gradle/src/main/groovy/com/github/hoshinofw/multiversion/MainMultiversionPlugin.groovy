@@ -12,6 +12,8 @@ import com.github.hoshinofw.multiversion.util.GeneralUtil
 import dev.architectury.plugin.ArchitectPluginExtension
 import org.gradle.api.Plugin
 import org.gradle.api.Project
+import org.gradle.api.Task
+import org.gradle.api.tasks.TaskProvider
 
 class MainMultiversionPlugin implements Plugin<Project> {
 
@@ -21,6 +23,21 @@ class MainMultiversionPlugin implements Plugin<Project> {
 
         MultiversionResourcesExtension multiversionResourcesExtension = target.extensions.create("multiversionResources", MultiversionResourcesExtension)
         MultiversionModulesExtension multiversionModulesExtension = target.extensions.create("multiversionModules", MultiversionModulesExtension)
+
+        // Always register the anchor task so the beforeSync IDE trigger never breaks sync,
+        // even if the plugin is later removed or patchModules is emptied.
+        TaskProvider<Task> genAll = target.tasks.register("generateAllPatchedSrc") {
+            it.group = "build setup"
+            it.description = "Generates all patchedSrc trees for IDE sync/import."
+        }
+
+        target.plugins.withId("org.jetbrains.gradle.plugin.idea-ext") {
+            target.idea.project.settings {
+                it.taskTriggers {
+                    it.beforeSync(genAll)
+                }
+            }
+        }
 
         DefaultProperties.assignIfNeeded(target)
         ApplyExternalPlugins.configure(target)

@@ -28,6 +28,13 @@ dependencies {
 publishing {
     repositories {
         mavenLocal()
+        maven {
+            url = uri("https://maven.hoshinofw.net/releases")
+            credentials {
+                username = System.getenv("REPOSILITE_USERNAME") ?: ""
+                password = System.getenv("REPOSILITE_PASSWORD") ?: ""
+            }
+        }
     }
 }
 
@@ -49,6 +56,7 @@ intellijPlatform {
 
     publishing {
         token = providers.environmentVariable("JBR_PUBLISH_TOKEN")
+
     }
 
     pluginVerification {

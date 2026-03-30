@@ -10,6 +10,15 @@ multiversionResources {
     ]
 }
 
+multiversionModules {
+    common = ['common']
+    fabric = ['fabric']
+    forge = ['forge']
+    neoforge = ['neoforge']
+
+    patchModules = ['forge', 'fabric', 'neoforge', 'common']
+}
+
 repositories {
     mavenLocal()
     mavenCentral()

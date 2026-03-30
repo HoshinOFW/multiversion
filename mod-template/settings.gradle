@@ -4,7 +4,6 @@ pluginManagement {
     repositories {
         mavenLocal()
         mavenCentral()
-        maven {url = uri("${rootDir}/libs/m2")}
     }
 }
 

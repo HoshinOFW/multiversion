@@ -32,11 +32,13 @@ class MainMultiversionSettingsPlugin implements Plugin<Settings> {
         versionDirs.each { File verDir ->
             String ver = verDir.name
 
-            // Include any subdirectory that has a build file — no hardcoded module name list.
+            // Include any subdirectory that looks like a module — either it has a build file
+            // (fully self-contained module) or a src/ directory (standard module configured
+            // entirely by the main plugin's subprojects block, no build.gradle needed).
             // Which modules are configured and patched is declared in multiversionModules { }
             // in the root build.gradle.
             List<File> moduleDirs = verDir.listFiles()
-                    ?.findAll { it.isDirectory() && hasBuildFile(it) }
+                    ?.findAll { it.isDirectory() && isModuleDir(it) }
                     ?.sort { it.name } ?: []
 
             moduleDirs.each { File modDir ->
@@ -53,7 +55,9 @@ class MainMultiversionSettingsPlugin implements Plugin<Settings> {
         }
     }
 
-    private static boolean hasBuildFile(File dir) {
-        new File(dir, "build.gradle").exists() || new File(dir, "build.gradle.kts").exists()
+    private static boolean isModuleDir(File dir) {
+        new File(dir, "build.gradle").exists() ||
+        new File(dir, "build.gradle.kts").exists() ||
+        new File(dir, "src").isDirectory()
     }
 }
