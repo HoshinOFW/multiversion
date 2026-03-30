@@ -1,12 +1,7 @@
-### Urgent:
-Rewrite patching logic
+- Add more IDE support:
+  - Refactoring across versions
+  - Navigation stuff through extra buttons?
+  - Implement some gradle tasks to update patchedSrc in smaller ways and have the IDE call them in the background. Ex: On file save, run a task to update patchedSrc. 
 
-### Current behavior:
-- Essentially overwrites classes with same signature
-
-### Full future behavior:
-- There is a @TargetClass annotation you put in 1.21.1 to and reference a class that exists in 1.20.1
-  - In that class, you can @Overwrite, @Inject, @Remove, methods and fields.
-  - The gradle script then builds the new classes in patchedSrc using those annotations
-- The IDEA plugin will run gradle tasks in the background to update patchedSrc on method/field/class creation, deletion, signature change.
-- There will be jsons for classes and resources where you can define files or folders to be excluded. 
+- Performance:
+  - Add better caching control to make sure that gradle knows files havent changed and only apply changes to patchedSrc.

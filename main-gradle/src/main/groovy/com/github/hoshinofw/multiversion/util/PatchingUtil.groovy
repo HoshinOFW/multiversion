@@ -2,6 +2,7 @@ package com.github.hoshinofw.multiversion.util
 
 import groovy.io.FileType
 import groovy.json.JsonSlurper
+import org.gradle.api.Project
 
 class PatchingUtil {
 

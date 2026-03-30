@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "com.github.hoshinofw.multiversion"
-version = "0.1.0"
+version = "0.4.0"
 
 repositories {
     mavenCentral()
@@ -28,14 +28,6 @@ dependencies {
 publishing {
     repositories {
         mavenLocal()
-        maven {
-            url = uri("https://maven.hoshinofw.net/releases'")
-
-            credentials {
-                username = System.getenv("REPOSILITE_USERNAME")
-                password = System.getenv("REPOSILITE_PASSWORD")
-            }
-        }
     }
 }
 
