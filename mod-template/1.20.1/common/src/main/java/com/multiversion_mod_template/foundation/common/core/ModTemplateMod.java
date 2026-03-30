@@ -15,4 +15,8 @@ public class ModTemplateMod {
 
     }
 
+    public void TBDeleted() {
+        
+    }
+
 }

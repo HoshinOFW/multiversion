@@ -1,5 +1,6 @@
 package com.github.hoshinofw.multiversion.util
 
+import com.github.hoshinofw.multiversion.MultiversionModulesExtension
 import org.gradle.api.Project
 import org.gradle.api.provider.Provider
 
@@ -24,15 +25,24 @@ class GeneralUtil {
         return s == "forge" || s == "neoforge" || s == "fabric"
     }
 
+    /** Returns true if the project path matches {@code :<version>:common}. */
     static boolean isVersionCommon(Project p) {
-        def parts = p.path.split(':').findAll { it }
-        parts.size() == 2 && parts[1] == 'common' && (parts[0] ==~ /\d+(\.\d+){1,3}/)
+        isVersionModule(p, 'common')
     }
 
-    static boolean is120(Project p) { p.path.startsWith(':1.20.1:') }
-    static boolean is121(Project p) { p.path.startsWith(':1.21.1:') }
+    /**
+     * Returns true if the project path matches {@code :<mcVersion>:<moduleName>}.
+     * Used by patchedSrc generation to discover projects for a given module group.
+     */
+    static boolean isVersionModule(Project p, String moduleName) {
+        def parts = p.path.split(':').findAll { it }
+        parts.size() == 2 && parts[1] == moduleName && (parts[0] ==~ /\d+(\.\d+){1,3}/)
+    }
 
-    static boolean isMcVersion(Project p, String string) {p.path.startsWith(string)}
+    static boolean isMcVersion(Project p, String version) {
+        String normalized = version.startsWith(":") ? version : ":${version}:"
+        p.path.startsWith(normalized)
+    }
 
     static String resolveValue(Object v, Project p)  {
         if (v instanceof Provider) return v.get()
@@ -49,12 +59,55 @@ class GeneralUtil {
         return out
     }
 
-    static String getModLoader(Project p) {return p.name}
+    /** Returns the actual module name (p.name). Used for archive naming and similar. */
+    static String getModLoader(Project p) { return p.name }
 
-    static boolean isCommon(Project p) {  p.name == "common" }
-    static boolean isFabric(Project p) { p.name == "fabric" }
-    static boolean isForge(Project p) { p.name == "forge" }
-    static boolean isNeoForge(Project p) {p.name == "neoforge" }
+    /**
+     * Returns the loader type for a project: {@code "common"}, {@code "fabric"},
+     * {@code "forge"}, or {@code "neoforge"}.
+     *
+     * <p>When {@code multiversionModules} is configured, the type is looked up from that
+     * extension. Falls back to {@code p.name} for standard module names to preserve
+     * backward compatibility.
+     */
+    static String loaderTypeOf(Project p) {
+        MultiversionModulesExtension mme = modulesExt(p)
+        if (mme?.isConfigured()) {
+            String type = mme.loaderTypeOf(p.name)
+            if (type != null) return type
+        }
+        return p.name
+    }
+
+    /**
+     * Returns true if the project is a common-type module.
+     *
+     * <p>Always true for {@code p.name == "common"} (backward compat). Additionally true
+     * for any module name listed under {@code multiversionModules { common = [...] }}.
+     */
+    static boolean isCommon(Project p) {
+        if (p.name == 'common') return true
+        MultiversionModulesExtension mme = modulesExt(p)
+        return mme?.isConfigured() && mme.loaderTypeOf(p.name) == 'common'
+    }
+
+    static boolean isFabric(Project p) {
+        if (p.name == 'fabric') return true
+        MultiversionModulesExtension mme = modulesExt(p)
+        return mme?.isConfigured() && mme.loaderTypeOf(p.name) == 'fabric'
+    }
+
+    static boolean isForge(Project p) {
+        if (p.name == 'forge') return true
+        MultiversionModulesExtension mme = modulesExt(p)
+        return mme?.isConfigured() && mme.loaderTypeOf(p.name) == 'forge'
+    }
+
+    static boolean isNeoForge(Project p) {
+        if (p.name == 'neoforge') return true
+        MultiversionModulesExtension mme = modulesExt(p)
+        return mme?.isConfigured() && mme.loaderTypeOf(p.name) == 'neoforge'
+    }
 
     static final List<String> minimumRequiredProperties = [
             "mod_id",
@@ -94,38 +147,55 @@ class GeneralUtil {
         }
     }
 
-    static boolean isNotBaseVersionModule(Project p) {isCommon(p) || isFabric(p) || isForge(p) || isNeoForge(p)}
+    /**
+     * Returns true if the project should receive full Architectury/Loom subproject configuration.
+     *
+     * <p>Always true for the four standard module names (backward compat). Additionally true
+     * for any module name declared in {@code multiversionModules}.
+     */
+    static boolean isNotBaseVersionModule(Project p) {
+        if (p.name in ['common', 'fabric', 'forge', 'neoforge']) return true
+        MultiversionModulesExtension mme = modulesExt(p)
+        return mme?.isConfigured() && mme.allModules().contains(p.name)
+    }
 
     static String mcVersion(Project p) {
         p.path.split(':').findAll { it }[0]
     }
 
     static String getTransformProduction(Project p) {
-        if (isCommon(p)) {null}
-        if (isFabric(p)) {return "transformProductionFabric"}
-        if (isForge(p)) {return "transformProductionForge"}
-        if (isNeoForge(p)) {return "transformProductionNeoForge"}
-        return null
+        switch (loaderTypeOf(p)) {
+            case 'fabric':   return 'transformProductionFabric'
+            case 'forge':    return 'transformProductionForge'
+            case 'neoforge': return 'transformProductionNeoForge'
+            default:         return null
+        }
     }
 
-     static Object configureArchitecturyPlatform (Project p, Object ext) {
-        if (p.name == "common") {
-            def enabled = (p.findProperty(("enabled_platforms")))
+    static Object configureArchitecturyPlatform(Project p, Object ext) {
+        String loaderType = loaderTypeOf(p)
+        if (loaderType == 'common') {
+            def enabled = (p.findProperty("enabled_platforms"))
                     .toString()
                     .split(',')
                     .collect { it.trim() }
                     .findAll { it }
-
             ext.common(enabled)
             return
         }
 
         ext.platformSetupLoomIde()
 
-        switch (p.name) {
-            case "fabric":   ext.fabric(); break
-            case "forge":    ext.forge(); break
-            case "neoforge": ext.neoForge(); break
+        switch (loaderType) {
+            case 'fabric':   ext.fabric(); break
+            case 'forge':    ext.forge(); break
+            case 'neoforge': ext.neoForge(); break
         }
+    }
+
+    // ---- private helpers ----
+
+    private static MultiversionModulesExtension modulesExt(Project p) {
+        p.rootProject.extensions.findByType(MultiversionModulesExtension)
     }
 }

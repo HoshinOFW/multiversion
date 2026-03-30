@@ -2,9 +2,6 @@ package com.github.hoshinofw.multiversion.util
 
 import groovy.io.FileType
 import groovy.json.JsonSlurper
-import org.gradle.api.GradleException
-import org.gradle.api.Project
-import org.gradle.api.tasks.Copy
 
 class PatchingUtil {
 
@@ -46,73 +43,106 @@ class PatchingUtil {
 
 
     /**
-     * Loads JSON object: { "1.21.1": ["a", "b"], ... }
+     * Loads multiversion-resources.json from a version's resources directory.
+     * Returns a map with "delete" (List&lt;String&gt;) and "move" (List&lt;Map&lt;String,String&gt;&gt;) keys.
+     * Returns empty lists if the file is absent or malformed.
+     *
+     * This method is intentionally decoupled from Project — it takes a plain File so it can
+     * be called for any module (common, fabric, forge, neoforge) without modification.
      */
-     static Map<String, List<String>> loadJsonListMap(Project root, String fileName) {
-        File f = root.file(fileName)
-        if (!f.exists()) return [:] as Map<String, List<String>>
+    static Map<String, Object> loadResourcePatchConfig(File resourcesDir) {
+        File f = new File(resourcesDir, "multiversion-resources.json")
+        if (!f.exists()) return [delete: [], move: []]
 
-        def parsed = new JsonSlurper().parse(f)
-        if (!(parsed instanceof Map)) return [:] as Map<String, List<String>>
+        def parsed
+        try { parsed = new JsonSlurper().parse(f) }
+        catch (Exception ignored) { return [delete: [], move: []] }
+        if (!(parsed instanceof Map)) return [delete: [], move: []]
 
-        Map<String, List<String>> out = [:] as Map<String, List<String>>
-        (parsed as Map).each { k, v ->
-            if (v instanceof Collection) out[k.toString()] = (v as Collection).collect { it.toString().trim() }.findAll { it }
-            else if (v != null) out[k.toString()] = [v.toString().trim()].findAll { it }
-            else out[k.toString()] = []
+        Map m = (Map) parsed
+
+        List<String> deletes = []
+        if (m.delete instanceof Collection) {
+            ((Collection) m.delete).each { if (it != null) deletes << it.toString().replace('\\', '/').trim() }
         }
-        return out
+        deletes.removeAll { !it }
+
+        List<Map<String, String>> moves = []
+        if (m.move instanceof Collection) {
+            ((Collection) m.move).each { entry ->
+                if (entry instanceof Map && entry.from && entry.to) {
+                    moves << [from: entry.from.toString().replace('\\', '/').trim(),
+                              to  : entry.to.toString().replace('\\', '/').trim()]
+                }
+            }
+        }
+        moves.removeAll { !it.from || !it.to }
+
+        return [delete: deletes, move: moves]
     }
 
     /**
-     * excludeClassList entries:
-     * - com.somepkg.SomeClass  -> com/somepkg/SomeClass.java
-     * - com.somepkg           -> com/somepkg/** (covers all files under that dir)
-     * - com.somepkg.*         -> com/somepkg/** (also supported)
+     * Applies resource patch operations (delete / move) to a patchedSrc resources directory.
      *
-     * NOTE: These patterns are meant to match the RELATIVE paths produced by relFileSet (no leading ""'** /' needed).
+     * Deletion is skipped for any path that the current version explicitly re-provides, so a
+     * newer version can always un-delete a resource simply by including it in its own source tree.
+     * Moves are always applied when the source path exists; if the destination was explicitly
+     * provided by the current version the moved content is discarded (destination wins) but
+     * the old path is still removed.
+     *
+     * @param outResDir          The patchedSrc resources output directory to modify in place.
+     * @param deletes            Relative paths to delete. Paths ending with '/' are treated as
+     *                           directories; all other entries are treated as files.
+     * @param moves              Ordered list of {from, to} relative path pairs.
+     * @param currentVersionFiles Relative paths explicitly provided by the current version's
+     *                           source directory. Used to guard against deleting re-provided files.
      */
-     static Set<String> fqcnOrPackageToJavaExcludePatterns(List<String> entries) {
-        def out = new LinkedHashSet<String>()
+    static void applyResourcePatch(File outResDir,
+                                   List<String> deletes,
+                                   List<Map<String, String>> moves,
+                                   Set<String> currentVersionFiles) {
+        // ---- Apply deletes ----
+        deletes.each { String rel ->
+            String r = rel?.replace('\\', '/')?.trim()
+            if (!r) return
 
-        entries.findAll { it != null && it.toString().trim() }.each { raw ->
-            String s = raw.toString().trim()
+            boolean isDir = r.endsWith('/')
+            String fsRel = isDir ? r.substring(0, r.length() - 1) : r
 
-            boolean wildcardPkg = s.endsWith(".*")
-            if (wildcardPkg) s = s.substring(0, s.length() - 2)
-
-            String last = s.tokenize('.').last()
-            boolean looksLikeClass = !wildcardPkg && last && Character.isUpperCase(last.charAt(0))
-
-            String path = s.replace('.', '/')
-
-            if (looksLikeClass) {
-                out.add("${path}.java")
+            // Skip if the current version explicitly re-provides this path
+            if (isDir) {
+                if (currentVersionFiles.any { it.startsWith(r) }) return
             } else {
-                out.add("${path}/**")
+                if (currentVersionFiles.contains(r)) return
             }
+
+            File target = new File(outResDir, fsRel)
+            if (!target.exists()) return
+            if (target.isDirectory()) target.deleteDir() else target.delete()
         }
 
-        return out
-    }
+        // ---- Apply moves ----
+        moves.each { Map<String, String> entry ->
+            String fromRel = entry.from?.replace('\\', '/')?.trim()
+            String toRel   = entry.to?.replace('\\', '/')?.trim()
+            if (!fromRel || !toRel) return
 
-/**
- * excludeResourceList entries:
- * - some/path/file.png -> some/path/file.png
- * - some/path/dir/     -> some/path/dir/**
- */
-    static Set<String> normalizeResourceExcludePatterns(List<String> entries) {
-        def out = new LinkedHashSet<String>()
-        entries.findAll { it != null && it.toString().trim() }.each { raw ->
-            String s = raw.toString().trim().replace('\\', '/')
-            if (!s) return
-            if (s.endsWith("/")) out.add(s + "**")
-            else out.add(s)
+            File fromFile = new File(outResDir, fromRel)
+            if (!fromFile.exists()) return
+
+            if (currentVersionFiles.contains(toRel)) {
+                // Current version explicitly provides the destination — discard moved content
+                // but still remove the old path so it doesn't linger.
+                fromFile.delete()
+                return
+            }
+
+            File toFile = new File(outResDir, toRel)
+            toFile.parentFile?.mkdirs()
+            toFile.bytes = fromFile.bytes
+            fromFile.delete()
         }
-        return out
     }
-
-
 
     static def parseVer(String v) {return v.split(/\./).collect { it as int } }
 
@@ -137,35 +167,5 @@ class PatchingUtil {
         return out
     }
 
-    static Map<String, ArrayList> loadBrokenMap(Project root) {
-        GeneralUtil.ensureNotNull(root, "LoadBrokenMap")
-        File f = root.file("excludeClassList.json")
-        if (!f.exists()) return [:]
-
-        def parsed = new JsonSlurper().parse(f)
-        if (!(parsed instanceof Map)) {
-            throw new GradleException("excludeClassList.json must be a JSON object: { \"1.21.1\": [\"...\"], ... }")
-        }
-
-        Map<String, ArrayList> out = [:].withDefault { [] }
-        parsed.each { k, v ->
-            if (v == null) return
-
-            String ver = k.toString()
-            Collection list = (v instanceof Collection) ? v : [v]
-
-            out[ver] = list.collect { it.toString().replace('\\','/').trim() }.findAll { it }
-        }
-        return out
-    }
-
-    static List<String> normalizeExcludePatterns(Collection<String> rels) {
-        return rels.collect { p ->
-            def s = p.replace('\\','/').trim()
-            if (!s) return null
-            if (!s.contains("/")) return "**/${s}"
-            return s
-        }.findAll { it != null }
-    }
 
 }

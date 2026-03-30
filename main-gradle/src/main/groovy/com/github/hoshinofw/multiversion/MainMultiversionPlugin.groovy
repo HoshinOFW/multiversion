@@ -20,11 +20,12 @@ class MainMultiversionPlugin implements Plugin<Project> {
         GeneralUtil.ensureNotNull(target, "Main")
 
         MultiversionResourcesExtension multiversionResourcesExtension = target.extensions.create("multiversionResources", MultiversionResourcesExtension)
+        MultiversionModulesExtension multiversionModulesExtension = target.extensions.create("multiversionModules", MultiversionModulesExtension)
 
         DefaultProperties.assignIfNeeded(target)
         ApplyExternalPlugins.configure(target)
         MultiversionSubprojectsLogic.configureSubprojects(target, multiversionResourcesExtension)
-        MultiversionPatchedSourceGeneration.configure(target)
+        MultiversionPatchedSourceGeneration.configure(target, multiversionModulesExtension)
         Collectors.registerCollectorTasks(target)
         DistributorPublishingConfiguration.configure(target)
 

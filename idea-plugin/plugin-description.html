@@ -1,0 +1,23 @@
+<![CDATA[
+<p>
+  IDE support for <a href="https://github.com/HoshinOFW/multiversion">Multiversion</a>, a compile-time mixin system for Minecraft mods that lets you maintain a single codebase across multiple game versions.
+</p>
+
+<p>
+  Instead of maintaining separate forks per version, you write version-specific patches using familiar
+  Mixin-style annotations. The Gradle plugin merges your version layers into a unified source tree at
+  build time with zero runtime overhead.
+
+  Whenever part of a class breaks in a more recent minecraft version, you essentially only need to write a mixin-like patch that fixes the relevant change, vastly reducing code duplication.
+</p>
+
+<h3>IDE Features</h3>
+<ul>
+  <li>Go to Declaration navigates to the correct original source file and line.</li>
+  <li>Suppresses multiple errors that result from the multiple existing source sets, as well as errors that the IDE flags, but will not be present at compile time.
+</ul>
+
+<p>
+  See the <a href="https://github.com/HoshinOFW/multiversion">GitHub repository</a> for setup instructions, Gradle plugin documentation, and the annotation reference.
+</p>
+

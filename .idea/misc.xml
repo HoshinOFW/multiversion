@@ -4,8 +4,5 @@
   <component name="FrameworkDetectionExcludesConfiguration">
     <file type="web" url="file://$PROJECT_DIR$" />
   </component>
-  <component name="GithubDefaultAccount">
-    <option name="defaultAccountId" value="cce9595d-59fa-4fb6-a130-0d9c5e0a0995" />
-  </component>
   <component name="ProjectRootManager" version="2" languageLevel="JDK_1_6" project-jdk-name="temurin-21" project-jdk-type="JavaSDK" />
 </project>

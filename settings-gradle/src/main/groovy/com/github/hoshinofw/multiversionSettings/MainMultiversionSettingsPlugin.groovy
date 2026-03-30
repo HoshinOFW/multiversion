@@ -9,7 +9,6 @@ import java.util.regex.Pattern
 class MainMultiversionSettingsPlugin implements Plugin<Settings> {
 
     static final Pattern versionDirRegex = ~/^\d+(\.\d+){1,3}$/
-    static final Set<String> knownModules = ["common", "fabric", "forge", "neoforge"]
 
     @Override
     void apply(Settings target) {
@@ -24,8 +23,6 @@ class MainMultiversionSettingsPlugin implements Plugin<Settings> {
             }
         }
 
-
-
         File root = target.settingsDir
 
         List<File> versionDirs = root.listFiles()
@@ -35,8 +32,11 @@ class MainMultiversionSettingsPlugin implements Plugin<Settings> {
         versionDirs.each { File verDir ->
             String ver = verDir.name
 
+            // Include any subdirectory that has a build file — no hardcoded module name list.
+            // Which modules are configured and patched is declared in multiversionModules { }
+            // in the root build.gradle.
             List<File> moduleDirs = verDir.listFiles()
-                    ?.findAll { it.isDirectory() && knownModules.contains(it.name) }
+                    ?.findAll { it.isDirectory() && hasBuildFile(it) }
                     ?.sort { it.name } ?: []
 
             moduleDirs.each { File modDir ->
@@ -51,5 +51,9 @@ class MainMultiversionSettingsPlugin implements Plugin<Settings> {
         if (versionDirs.isEmpty()) {
             logger.lifecycle("[settings] No version directories found (expected e.g. 1.20.1/1.21.1).")
         }
+    }
+
+    private static boolean hasBuildFile(File dir) {
+        new File(dir, "build.gradle").exists() || new File(dir, "build.gradle.kts").exists()
     }
 }

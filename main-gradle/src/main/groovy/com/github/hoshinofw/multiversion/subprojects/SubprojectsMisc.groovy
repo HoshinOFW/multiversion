@@ -40,12 +40,17 @@ class SubprojectsMisc {
                 inputFile.set p.shadowJar.archiveFile
             }
         } else if (GeneralUtil.isNotBaseVersionModule(p)) {
-            def sharedRoot = root.file("common")
+            // Each common-type module may have a root-level shared source directory named
+            // after the module itself (e.g. common/src/main/java, api/src/main/java).
+            // Only added if the directory actually exists — it is always optional.
+            def sharedRoot = root.file(p.name)
 
-            p.sourceSets {
-                main {
-                    java.srcDir sharedRoot.toPath().resolve("src/main/java").toFile()
-                    resources.srcDir sharedRoot.toPath().resolve("src/main/resources").toFile()
+            if (sharedRoot.exists()) {
+                p.sourceSets {
+                    main {
+                        java.srcDir sharedRoot.toPath().resolve("src/main/java").toFile()
+                        resources.srcDir sharedRoot.toPath().resolve("src/main/resources").toFile()
+                    }
                 }
             }
         }

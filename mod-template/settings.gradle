@@ -2,6 +2,8 @@ pluginManagement {
     includeBuild("../settings-gradle") //Remove this
     includeBuild("../main-gradle") //Remove this
     repositories {
+        mavenLocal()
+        mavenCentral()
         maven {url = uri("${rootDir}/libs/m2")}
     }
 }

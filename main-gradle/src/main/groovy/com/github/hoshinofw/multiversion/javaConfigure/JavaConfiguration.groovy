@@ -10,7 +10,7 @@ class JavaConfiguration {
     static void configure(Project p) {
         p.java {
             withSourcesJar()
-            if (GeneralUtil.is120(p)) {
+            if (GeneralUtil.isMcVersion(p, "1.20.1")) {
                 sourceCompatibility = JavaVersion.VERSION_17
                 targetCompatibility = JavaVersion.VERSION_17
             } else {
@@ -20,13 +20,7 @@ class JavaConfiguration {
         }
 
         p.tasks.withType(JavaCompile).configureEach {
-            if (GeneralUtil.is120(p)) {
-                it.options.release = 17
-            } else if (GeneralUtil.is121(p)) {
-                it.options.release = 21
-            } else {
-                it.options.release = 21
-            }
+            it.options.release = GeneralUtil.isMcVersion(p, "1.20.1") ? 17 : 21
         }
     }
 

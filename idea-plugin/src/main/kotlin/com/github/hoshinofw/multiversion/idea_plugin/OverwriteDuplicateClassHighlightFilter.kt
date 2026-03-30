@@ -8,11 +8,12 @@ import com.intellij.psi.PsiJavaFile
 import com.intellij.psi.JavaPsiFacade
 import com.intellij.psi.search.GlobalSearchScope
 
+private val VERSION_DIR_REGEX = Regex("""/([0-9]+\.[0-9]+(\.[0-9]+)?)/""")
+
 class OverwriteDuplicateClassHighlightFilter : HighlightInfoFilter {
 
     companion object {
         private const val PATCHED_SEGMENT = "/build/patchedSrc/"
-        private val VERSION_DIR_REGEX = Regex("""/([0-9]+\.[0-9]+(\.[0-9]+)?)/""")
     }
 
     override fun accept(info: HighlightInfo, file: PsiFile?): Boolean {
@@ -47,3 +48,4 @@ class OverwriteDuplicateClassHighlightFilter : HighlightInfoFilter {
         return true
     }
 }
+

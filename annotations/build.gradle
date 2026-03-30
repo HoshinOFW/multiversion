@@ -9,11 +9,24 @@ version = project.annotations_package_version
 java {
     toolchain { languageVersion.set(JavaLanguageVersion.of(17)) }
     withSourcesJar()
-    withJavadocJar()
 }
 
 publishing {
     publications {
-
+        mavenJava(MavenPublication) {
+            artifactId = "multiversion-annotations"
+            from components.java
+        }
     }
+    repositories {
+        maven {
+            url = uri('https://maven.hoshinofw.net/releases')
+
+            credentials(PasswordCredentials) {
+                username = System.getenv('REPOSILITE_USERNAME') ?: ''
+                password = System.getenv('REPOSILITE_PASSWORD') ?: ''
+            }
+        }
+    }
+
 }

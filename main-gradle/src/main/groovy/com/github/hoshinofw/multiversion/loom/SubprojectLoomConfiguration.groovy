@@ -9,12 +9,12 @@ class SubprojectLoomConfiguration {
 
         if (!GeneralUtil.isCommon(p) && GeneralUtil.isNotBaseVersionModule(p)) {
             // set before applying loom
-            p.extensions.extraProperties.set("loom.platform", GeneralUtil.getModLoader(p))
+            p.extensions.extraProperties.set("loom.platform", GeneralUtil.loaderTypeOf(p))
             p.pluginManager.apply("dev.architectury.loom")
         }
 
         p.loom {
-            if (!GeneralUtil.is120(p)) {
+            if (!GeneralUtil.isMcVersion(p, "1.20.1")) {
                 it.silentMojangMappingsLicense()
             }
             if (GeneralUtil.isForge(p)) {

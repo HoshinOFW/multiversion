@@ -6,11 +6,8 @@ plugins {
 
 base {
     group = "com.github.hoshinofw.multiversion"
-    version = "0.1.0"
+    version = "0.2.0"
 }
-
-def mainDir = projectDir.parentFile // or "mainProject.marker"
-def mod_template_libs_dir = new File(mainDir, "mod-template/libs/m2")
 
 java {
     toolchain { languageVersion = JavaLanguageVersion.of(21) }
@@ -46,6 +43,7 @@ dependencies {
     implementation "org.jetbrains.gradle.plugin.idea-ext:org.jetbrains.gradle.plugin.idea-ext.gradle.plugin:1.3"
     implementation "me.modmuss50.mod-publish-plugin:me.modmuss50.mod-publish-plugin.gradle.plugin:1.1.0"
 
+    implementation "com.github.javaparser:javaparser-core:3.26.3"
 }
 
 gradlePlugin {
@@ -61,17 +59,14 @@ gradlePlugin {
 
 publishing {
     repositories {
-        mavenLocal()
         maven {
-            url = uri("${mod_template_libs_dir}") // adjust so it lands in root/libs/m2
-        }
-    }
-}
+            url = uri('https://maven.hoshinofw.net/releases')
 
-if (false) {
-    pluginBundle {
-        website = "https://github.com/HoshinOFW/multiversion"
-        vcsUrl = "https://github.com/HoshinOFW/multiversion.git"
-        tags = ["minecraft", "multiversion", "architectury"]
+            credentials {
+                username = System.getenv('REPOSILITE_USERNAME') ?: ''
+                password = System.getenv('REPOSILITE_PASSWORD') ?: ''
+            }
+        }
+
     }
 }

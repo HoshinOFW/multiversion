@@ -2,7 +2,6 @@
     <id>com.github.hoshinofw.multiversion</id>
     <name>Version Patcher Support</name>
     <vendor>HoshinOfW</vendor>
-    <description>Provides IDE support for the modded Minecraft Multiversion gradle plugin.</description>
 
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.java</depends>
@@ -10,6 +9,19 @@
 
     <extensions defaultExtensionNs="com.intellij">
         <daemon.highlightInfoFilter implementation="com.github.hoshinofw.multiversion.idea_plugin.OverwriteDuplicateClassHighlightFilter"/>
+        <daemon.highlightInfoFilter implementation="com.github.hoshinofw.multiversion.idea_plugin.ShadowVersionHighlightFilter"/>
         <gotoDeclarationHandler implementation="com.github.hoshinofw.multiversion.idea_plugin.PatchedSrcGotoDeclarationHandler"/>
+        <psi.referenceContributor language="JAVA" implementation="com.github.hoshinofw.multiversion.idea_plugin.DeleteDescriptorReferenceContributor"/>
+        <localInspection language="JAVA"
+                         displayName="@Delete descriptor validation"
+                         groupName="Multiversion"
+                         enabledByDefault="true"
+                         level="ERROR"
+                         implementationClass="com.github.hoshinofw.multiversion.idea_plugin.DeleteAnnotationInspection"/>
     </extensions>
+
+    <projectListeners>
+        <listener class="com.github.hoshinofw.multiversion.idea_plugin.PatchedSrcEditorRedirectListener"
+                  topic="com.intellij.openapi.fileEditor.FileEditorManagerListener"/>
+    </projectListeners>
 </idea-plugin>

@@ -6,13 +6,8 @@ plugins {
 
 base {
     group = "com.github.hoshinofw.multiversion"
-    version = "0.1.0"
+    version = "0.2.0"
 }
-
-
-
-def mainDir = projectDir.parentFile // or "mainProject.marker"
-def mod_template_libs_dir = new File(mainDir, "mod-template/libs/m2")
 
 java {
     toolchain { languageVersion = JavaLanguageVersion.of(21) }
@@ -30,9 +25,13 @@ dependencies {
 
 publishing {
     repositories {
-        mavenLocal()
         maven {
-            url = uri("${mod_template_libs_dir}") // adjust so it lands in root/libs/m2
+            url = uri('https://maven.hoshinofw.net/releases')
+
+            credentials {
+                username = System.getenv('REPOSILITE_USERNAME') ?: ''
+                password = System.getenv('REPOSILITE_PASSWORD') ?: ''
+            }
         }
     }
 }
@@ -45,13 +44,5 @@ gradlePlugin {
             displayName = "Multiversion Settings Plugin"
             description = "Auto-includes version/module projects by scanning the filesystem."
         }
-    }
-}
-
-if (false) {
-    pluginBundle {
-        website = "https://github.com/HoshinOFW/multiversion"
-        vcsUrl  = "https://github.com/HoshinOFW/multiversion.git"
-        tags = ["minecraft", "multiversion", "architectury"]
     }
 }

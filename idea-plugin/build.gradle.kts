@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "com.github.hoshinofw.multiversion"
-version = "0.0.6"
+version = "0.1.0"
 
 repositories {
     mavenCentral()
@@ -29,7 +29,12 @@ publishing {
     repositories {
         mavenLocal()
         maven {
-            url = uri("$mod_template_libs_dir") // adjust so it lands in root/libs/m2
+            url = uri("https://maven.hoshinofw.net/releases'")
+
+            credentials {
+                username = System.getenv("REPOSILITE_USERNAME")
+                password = System.getenv("REPOSILITE_PASSWORD")
+            }
         }
     }
 }
@@ -41,15 +46,22 @@ kotlin {
 
 intellijPlatform {
     pluginConfiguration {
-        name = "Multiversion patcher"
-        vendor { name = "HoshinOFW" }
+        name = "Minecraft Multiversion Modding"
+        vendor {
+            name = "HoshinOFW"
+            url = "https://github.com/HoshinOFW/multiversion"
+        }
+        description = providers.fileContents(layout.projectDirectory.file("plugin-description.html")).asText
+        changeNotes = providers.fileContents(layout.projectDirectory.file("CHANGELOG.html")).asText
+    }
+
+    publishing {
+        token = providers.environmentVariable("JBR_PUBLISH_TOKEN")
     }
 
     pluginVerification {
-    ides {
-        ide(IntelliJPlatformType.IntellijIdeaCommunity, "2024.3.1")
-        //ide(IntelliJPlatformType.IntellijIdeaUltimate, "2024.3.1")
+        ides {
+            ide(IntelliJPlatformType.IntellijIdeaCommunity, "2024.3.1")
+        }
     }
-}
-
 }
