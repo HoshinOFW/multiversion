@@ -41,16 +41,4 @@ class PublishUtil {
         }
     }
 
-    static def collectTaskNameForPublishTask = { String publishTaskName ->
-        // publishCurseforge_1_21_1_neoforge -> collect_1_21_1_neoforge
-        if (publishTaskName.startsWith("publishCurseforge_")) {
-            return publishTaskName.replaceFirst("publishCurseforge_", "collect_")
-        }
-        // publishModrinth_1_21_1_neoforge -> collect_1_21_1_neoforge
-        if (publishTaskName.startsWith("publishModrinth_")) {
-            return publishTaskName.replaceFirst("publishModrinth_", "collect_")
-        }
-        return null
-    }
-
 }

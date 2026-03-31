@@ -40,8 +40,21 @@ class MultiversionResourcesExtension {
             patterns.addAll(mrt.filesMatching)
             patterns.addAll(mrt.defaultFilesMatching)
 
-            t.filesMatching(patterns) {
-                it.expand(resolved)
+            // Do property substitution in doLast via plain string replacement rather than
+            // filesMatching/expand, which registers MatchingCopyAction on the task and causes
+            // IDEA to emit "Cannot resolve resource filtering of MatchingCopyAction" on every sync.
+            t.doLast {
+                File outDir = t.destinationDir
+                if (!outDir.exists()) return
+                patterns.each { String pattern ->
+                    p.fileTree(outDir) { include(pattern) }.each { File f ->
+                        String content = f.getText('UTF-8')
+                        resolved.each { String k, String v ->
+                            content = content.replace('${' + k + '}', v)
+                        }
+                        f.setText(content, 'UTF-8')
+                    }
+                }
             }
         }
     }

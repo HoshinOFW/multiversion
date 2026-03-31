@@ -17,6 +17,7 @@ class PatchedSrcGotoDeclarationHandler : GotoDeclarationHandler {
 
     override fun getGotoDeclarationTargets(sourceElement: PsiElement?, offset: Int, editor: Editor): Array<PsiElement>? {
         val project = editor.project ?: return null
+        if (!isMultiversionProject(project)) return null
 
         val target = TargetElementUtil.findTargetElement(editor, TargetElementUtil.getInstance().allAccepted)
             ?: return null

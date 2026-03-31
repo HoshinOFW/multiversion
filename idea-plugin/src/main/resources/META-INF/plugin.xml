@@ -18,10 +18,19 @@
                          enabledByDefault="true"
                          level="ERROR"
                          implementationClass="com.github.hoshinofw.multiversion.idea_plugin.DeleteAnnotationInspection"/>
+        <applicationService serviceImplementation="com.github.hoshinofw.multiversion.idea_plugin.MultiversionSettings"/>
+        <applicationConfigurable parentId="tools"
+                                 instance="com.github.hoshinofw.multiversion.idea_plugin.MultiversionConfigurable"
+                                 id="com.github.hoshinofw.multiversion.settings"
+                                 displayName="Multiversion"/>
+        <renamePsiElementProcessor implementation="com.github.hoshinofw.multiversion.idea_plugin.MultiversionRenameProcessor"
+                                   order="first"/>
     </extensions>
 
     <projectListeners>
         <listener class="com.github.hoshinofw.multiversion.idea_plugin.PatchedSrcEditorRedirectListener"
                   topic="com.intellij.openapi.fileEditor.FileEditorManagerListener"/>
+        <listener class="com.github.hoshinofw.multiversion.idea_plugin.MultiversionMoveListener"
+                  topic="com.intellij.refactoring.listeners.RefactoringEventListener"/>
     </projectListeners>
 </idea-plugin>

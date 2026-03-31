@@ -6,6 +6,7 @@ import com.github.hoshinofw.multiversion.loom.SubprojectLoomConfiguration
 import com.github.hoshinofw.multiversion.properties.DefaultProperties
 import com.github.hoshinofw.multiversion.publishing.MavenJavaPublishingConfiguration
 import com.github.hoshinofw.multiversion.resourceExtension.MultiversionResourcesExtension
+import com.github.hoshinofw.multiversion.util.CollectionUtil
 import com.github.hoshinofw.multiversion.util.GeneralUtil
 import org.gradle.api.Project
 
@@ -75,6 +76,8 @@ class MultiversionSubprojectsLogic {
             JavaConfiguration.configure(p)
 
             MavenJavaPublishingConfiguration.configure(p)
+
+            CollectionUtil.registerCollectTask(p, root)
         }
     }
 

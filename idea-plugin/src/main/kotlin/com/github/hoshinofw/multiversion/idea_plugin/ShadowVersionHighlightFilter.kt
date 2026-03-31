@@ -11,6 +11,7 @@ class ShadowVersionHighlightFilter : HighlightInfoFilter {
 
     override fun accept(info: HighlightInfo, file: PsiFile?): Boolean {
         if (file == null || info.severity != HighlightSeverity.ERROR) return true
+        if (!isMultiversionProject(file.project)) return true
         val desc = info.description ?: return true
         if (!desc.contains("might not have been initialized")) return true
 

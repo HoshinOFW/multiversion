@@ -9,8 +9,7 @@ import com.intellij.psi.*
 import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.util.ProcessingContext
 import java.io.File
-
-// ── Reference contributor ────────────────────────────────────────────────────
+import com.intellij.psi.ElementManipulators
 
 class DeleteDescriptorReferenceContributor : PsiReferenceContributor() {
     override fun registerReferenceProviders(registrar: PsiReferenceRegistrar) {
@@ -24,6 +23,7 @@ class DeleteDescriptorReferenceContributor : PsiReferenceContributor() {
 private class DeleteDescriptorReferenceProvider : PsiReferenceProvider() {
     override fun getReferencesByElement(element: PsiElement, context: ProcessingContext): Array<PsiReference> {
         val literal = element as? PsiLiteralExpression ?: return PsiReference.EMPTY_ARRAY
+        if (!isMultiversionProject(literal.project)) return PsiReference.EMPTY_ARRAY
         val value = literal.value as? String ?: return PsiReference.EMPTY_ARRAY
         val annotation = enclosingDeleteAnnotation(literal) ?: return PsiReference.EMPTY_ARRAY
         val psiClass = annotation.owner() ?: return PsiReference.EMPTY_ARRAY
@@ -43,6 +43,13 @@ class DeleteDescriptorReference(
     }
 
     override fun getVariants(): Array<Any> = emptyArray()
+
+    override fun handleElementRename(newElementName: String): PsiElement {
+        val current = literal.value as? String ?: return literal
+        val parenIdx = current.indexOf('(')
+        val newText = if (parenIdx >= 0) "$newElementName${current.substring(parenIdx)}" else newElementName
+        return ElementManipulators.handleContentChange(literal, rangeInElement, newText)
+    }
 }
 
 // ── Inspection ───────────────────────────────────────────────────────────────
@@ -51,7 +58,8 @@ class DeleteAnnotationInspection : LocalInspectionTool() {
     override fun buildVisitor(holder: ProblemsHolder, isOnTheFly: Boolean): PsiElementVisitor =
         object : JavaElementVisitor() {
             override fun visitAnnotation(annotation: PsiAnnotation) {
-                if (!annotation.qualifiedName.orEmpty().endsWith("Delete")) return
+                if (!isMultiversionProject(annotation.project)) return
+                if (!isDeleteAnnotation(annotation.qualifiedName.orEmpty())) return
                 val psiClass = annotation.owner() ?: return
                 val prevClass = findPreviousVersionClass(psiClass) ?: return
 
@@ -73,6 +81,9 @@ class DeleteAnnotationInspection : LocalInspectionTool() {
 
 private val VERSION_REGEX = Regex("""/(\d+\.\d+(?:\.\d+)?)/""")
 
+internal fun isDeleteAnnotation(qualifiedName: String): Boolean =
+    qualifiedName.substringAfterLast('.').startsWith("Delete")
+
 fun findPreviousVersionClass(psiClass: PsiClass): PsiClass? {
     val file = psiClass.containingFile?.virtualFile ?: return null
     val normPath = file.path.replace('\\', '/')
@@ -89,11 +100,15 @@ fun findPreviousVersionClass(psiClass: PsiClass): PsiClass? {
     if (currentIdx <= 0) return null
     val prevVersion = versionDirs[currentIdx - 1]
 
+    val versionSuffix = "/${currentVersion}/"
+    val afterVersion  = normPath.substring(normPath.indexOf(versionSuffix) + versionSuffix.length)
+    val moduleName    = afterVersion.substringBefore("/src/main/java/")
+
     val srcMainJavaIdx = normPath.indexOf("/src/main/java/")
     if (srcMainJavaIdx < 0) return null
     val relClassPath = normPath.substring(srcMainJavaIdx + "/src/main/java/".length)
 
-    val prevFile = File(prevVersion, "common/src/main/java/$relClassPath")
+    val prevFile = File(prevVersion, "$moduleName/src/main/java/$relClassPath")
     val prevVf = LocalFileSystem.getInstance().findFileByIoFile(prevFile) ?: return null
     val prevPsiFile = PsiManager.getInstance(psiClass.project).findFile(prevVf) ?: return null
     return PsiTreeUtil.findChildOfType(prevPsiFile, PsiClass::class.java)
@@ -127,7 +142,7 @@ private fun PsiAnnotation.owner(): PsiClass? =
 
 private fun enclosingDeleteAnnotation(element: PsiElement): PsiAnnotation? {
     val annotation = PsiTreeUtil.getParentOfType(element, PsiAnnotation::class.java) ?: return null
-    return if (annotation.qualifiedName.orEmpty().endsWith("Delete")) annotation else null
+    return if (isDeleteAnnotation(annotation.qualifiedName.orEmpty())) annotation else null
 }
 
 private fun forEachDescriptorLiteral(annotation: PsiAnnotation, action: (PsiLiteralExpression, String) -> Unit) {

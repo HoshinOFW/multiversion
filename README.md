@@ -305,12 +305,14 @@ Place a `changelog.md` file at the root of the project. Its contents are sent as
 
 #### Running a publish
 
-Build and collect the JARs first, then publish:
+Collect the JARs, then publish:
 
 ```bash
-./gradlew build collectBuildsAll
+./gradlew collectBuildsAll
 ./gradlew publishAllSafe -PPUBLISH_RELEASE=true
 ```
+
+`collectBuildsAll` triggers the build for every version/loader subproject and copies the resulting JARs into `builds/<mod_version>/<minecraft_version>/<loader>/`. You can also collect a single subproject by running its `collectBuilds` task directly, e.g. `./gradlew :1.21.1:neoforge:collectBuilds`.
 
 Without `-PPUBLISH_RELEASE=true` the publish task runs in dry-run mode and does not upload anything. This is useful for checking that credentials and properties are wired correctly before committing to a release.
 

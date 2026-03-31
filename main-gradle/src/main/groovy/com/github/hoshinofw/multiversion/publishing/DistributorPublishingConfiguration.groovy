@@ -126,18 +126,6 @@ class DistributorPublishingConfiguration {
                     }
         }
 
-        root.tasks.configureEach { t ->
-            def ct = PublishUtil.collectTaskNameForPublishTask(t.name)
-            if (ct != null && root.tasks.findByName(ct) != null) {
-                t.dependsOn(ct)
-            }
-        }
-
-        // Make sure the aggregate publish depends on collecting everything
-        root.tasks.matching { it.name == "publishMods" }.configureEach {
-            it.dependsOn("collectBuildsAll")
-        }
-
         root.tasks.named("publishMods").configure {
             it.dependsOn("collectBuildsAll")
         }

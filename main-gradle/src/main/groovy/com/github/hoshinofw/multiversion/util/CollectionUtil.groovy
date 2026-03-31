@@ -1,36 +1,35 @@
 package com.github.hoshinofw.multiversion.util
 
 import org.gradle.api.Project
-import org.gradle.api.tasks.Copy
 
 class CollectionUtil {
 
-    static void collectJarFrom(Project root, String mc, String loader, String projectPath) {
-        def modVer = root.mod_version.toString()
-        def destDir = root.layout.projectDirectory.dir("builds/${modVer}/${mc}/${loader}")
+    static void registerCollectTask(Project sp, Project root) {
+        String mc     = sp.findProperty("minecraft_version").toString()
+        String loader = sp.name
+        String modVer = root.findProperty("mod_version").toString()
+        def destDir   = root.layout.projectDirectory.dir("builds/${modVer}/${mc}/${loader}")
 
-        root.tasks.register("collect_${mc.replace('.','_')}_${loader}", Copy) {
-            it.group = "distribution"
-            it.description = "Builds ${projectPath} and collects jars into builds/${modVer}/${mc}/${loader}"
+        // Use a plain Task (not Copy/Sync) so IDEA never inspects a CopySpec and emits
+        // "Cannot resolve resource filtering of MatchingCopyAction" warnings.
+        sp.tasks.register("collectBuilds") { t ->
+            t.group = "distribution"
+            t.description = "Builds and collects the jar into builds/${modVer}/${mc}/${loader}"
+            t.dependsOn("build")
 
-            it.dependsOn("${projectPath}:build")
-            it.from(root.project(projectPath).layout.buildDirectory.dir("libs"))
-            it.into(destDir)
+            t.doFirst {
+                def srcDir = sp.layout.buildDirectory.dir("libs").get().asFile
+                def dir    = destDir.asFile
+                if (dir.exists()) dir.deleteDir()
+                dir.mkdirs()
 
-            it.include("*-${modVer}.jar")
-            it.exclude("*-sources.jar")
-            it.exclude("*-javadoc.jar")
-            it.exclude("*-shadow.jar")
-            it.exclude("*-dev.jar")
-            it.exclude("*-dev-shadow.jar")
-            it.exclude("*-all.jar")
-
-
-            it.doFirst {
-                if (destDir.asFile.exists()) {
-                    destDir.asFile.deleteDir()
+                sp.copy {
+                    from(srcDir)
+                    into(dir)
+                    include("*-${modVer}.jar")
+                    exclude("*-sources.jar", "*-javadoc.jar", "*-shadow.jar",
+                            "*-dev.jar", "*-dev-shadow.jar", "*-all.jar")
                 }
-                destDir.asFile.mkdirs()
             }
         }
     }
@@ -65,10 +64,8 @@ class CollectionUtil {
     }
 
     private static Parsed parseMcVersion(String s) {
-        // Split "1.21.1-rc2" into numeric "1.21.1" + suffix "rc2"
         def m = (s.trim() =~ /^(\d+(?:\.\d+){0,3})(?:[-+](.+))?$/)
         if (!m.matches()) {
-            // Fallback: treat as 0 with whole string as suffix
             return new Parsed(nums: [0], suffix: s.trim())
         }
 
@@ -80,15 +77,11 @@ class CollectionUtil {
     }
 
     private static int compareSuffix(String a, String b) {
-        // Put common MC suffixes in a sensible order:
-        // snapshot/pre < rc < final (handled earlier)
-        // If both are same type, compare trailing number if present.
         def ra = rankSuffix(a)
         def rb = rankSuffix(b)
         int c = Integer.compare(ra.rank, rb.rank)
         if (c != 0) return c
 
-        // Same rank/type -> compare number if both have it
         if (ra.num != null || rb.num != null) {
             int an = ra.num != null ? ra.num : 0
             int bn = rb.num != null ? rb.num : 0
@@ -96,7 +89,6 @@ class CollectionUtil {
             if (c != 0) return c
         }
 
-        // Fallback: plain lexical
         return a <=> b
     }
 
@@ -108,7 +100,6 @@ class CollectionUtil {
     private static RankedSuffix rankSuffix(String s) {
         def x = s.toLowerCase(Locale.ROOT)
 
-        // Common patterns: "pre1", "rc2", "snapshot", etc.
         def pre = (x =~ /^(pre|preview)(\d+)?$/)
         if (pre.matches()) return new RankedSuffix(rank: 0, num: pre[0][2] ? pre[0][2] as int : null)
 
@@ -118,8 +109,6 @@ class CollectionUtil {
         def rc = (x =~ /^(rc)(\d+)?$/)
         if (rc.matches()) return new RankedSuffix(rank: 1, num: rc[0][2] ? rc[0][2] as int : null)
 
-        // Unknown suffix: keep it "pre-release-ish" but after known pre/rc ordering
-        // (still less than final release because final handled earlier)
         return new RankedSuffix(rank: 2, num: extractTrailingInt(x))
     }
 

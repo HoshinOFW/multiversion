@@ -9,7 +9,6 @@ import org.gradle.api.file.Directory
 import org.gradle.api.file.DuplicatesStrategy
 import org.gradle.api.provider.Provider
 import org.gradle.api.tasks.SourceSetContainer
-import org.gradle.api.tasks.Sync
 import org.gradle.api.tasks.TaskProvider
 
 class MultiversionPatchedSourceGeneration {
@@ -156,57 +155,74 @@ class MultiversionPatchedSourceGeneration {
             File mergeCurrentSrcDir = patchP.file("src/main/java")
             String mergeCurrentRelRoot = root.projectDir.toPath().relativize(mergeCurrentSrcDir.toPath()).toString().replace('\\', '/')
 
-            TaskProvider<Sync> genJava = patchP.tasks.register("generatePatchedJava", Sync) { Sync t ->
+            // Pre-compute per-layer data at configuration time to avoid loop-variable capture
+            // issues inside the doFirst closure.
+            List<Map> javaLayers = []
+            List<Map> resLayers  = []
+            for (int j = 0; j < i; j++) {
+                String v          = versions[j]
+                Project layerProj = verToProj[v]
+                File layerJavaDir = layerProj.file("src/main/java")
+                File layerResDir  = layerProj.file("src/main/resources")
+
+                def overriddenJava = new LinkedHashSet<String>()
+                def overriddenRes  = new LinkedHashSet<String>()
+                for (int k = j + 1; k <= i; k++) {
+                    String key = versions[k]
+                    def sj = relJavaByVer[key]
+                    def sr = relResByVer[key]
+                    if (sj == null) {
+                        patchP.logger.lifecycle("[patch-${moduleName}] WARNING: no rel set for version '${key}' (k=${k}, j=${j}, i=${i}). You can usually safely ignore this warning.")
+                    } else {
+                        overriddenJava.addAll(sj as Collection)
+                    }
+                    if (sr != null) overriddenRes.addAll(sr as Collection)
+                }
+                javaLayers << [dir: layerJavaDir, excluded: new LinkedHashSet<String>(overriddenJava)]
+                resLayers  << [dir: layerResDir,  excluded: new LinkedHashSet<String>(overriddenRes)]
+            }
+            File currentJavaSrcDir = patchP.file("src/main/java")
+            File currentResSrcDir  = patchP.file("src/main/resources")
+
+            // Use plain tasks (not Sync/Copy) so IDEA never traverses a CopySpec and
+            // emits "Cannot resolve resource filtering of MatchingCopyAction" warnings.
+            TaskProvider<Task> genJava = patchP.tasks.register("generatePatchedJava") { Task t ->
                 t.group = "build setup"
                 t.description = "Generates merged Java sources for ${patchP.path} into build/patchedSrc."
-                t.duplicatesStrategy = DuplicatesStrategy.INCLUDE
-
-                t.into(outJavaDir)
 
                 t.doFirst {
-                    root.delete(t.destinationDir)
+                    outJavaDir.get().asFile.deleteDir()
 
                     mapFile.parentFile.mkdirs()
                     if (mapTmp.exists()) mapTmp.delete()
-
                     mapOut = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(mapTmp, false), "UTF-8"))
-                }
 
-                // 0) root-level shared Java for this module (optional)
-                if (sharedJava.exists()) {
-                    t.from(sharedJava) { spec ->
-                        spec.include("**/*.java")
-                        spec.eachFile { d -> record(sharedJava, d.relativePath.pathString) }
-                    }
-                }
+                    patchP.copy {
+                        duplicatesStrategy = DuplicatesStrategy.INCLUDE
+                        into(outJavaDir)
 
-                // 1) previous version layers (0..i-1), files overridden by any later layer are excluded
-                for (int j = 0; j < i; j++) {
-                    String v = versions[j]
-                    Project layerProj = verToProj[v]
-                    File layerJavaDir = layerProj.file("src/main/java")
+                        // 0) root-level shared Java for this module (optional)
+                        if (sharedJava.exists()) {
+                            from(sharedJava) { spec ->
+                                spec.include("**/*.java")
+                                spec.eachFile { d -> record(sharedJava, d.relativePath.pathString) }
+                            }
+                        }
 
-                    def overriddenByLater = new LinkedHashSet<String>()
-                    for (int k = j + 1; k <= i; k++) {
-                        String key = versions[k]
-                        def s = relJavaByVer[key]
-                        if (s == null) {
-                            patchP.logger.lifecycle("[patch-${moduleName}] WARNING: no rel set for version '${key}' (k=${k}, j=${j}, i=${i}). You can usually safely ignore this warning.")
-                        } else {
-                            overriddenByLater.addAll(s as Collection)
+                        // 1) previous version layers — files overridden by any later layer are excluded
+                        javaLayers.each { layer ->
+                            from(layer.dir as File) { spec ->
+                                spec.include("**/*.java")
+                                spec.exclude(layer.excluded as Collection)
+                                spec.eachFile { d -> record(layer.dir as File, d.relativePath.pathString) }
+                            }
+                        }
+
+                        // 2) FINAL overlay: current version sources (never filtered)
+                        from(currentJavaSrcDir) { spec ->
+                            spec.include("**/*.java")
                         }
                     }
-
-                    t.from(layerJavaDir) { spec ->
-                        spec.include("**/*.java")
-                        spec.exclude(overriddenByLater)
-                        spec.eachFile { d -> record(layerJavaDir, d.relativePath.pathString) }
-                    }
-                }
-
-                // 2) FINAL overlay: current version sources (never filtered)
-                t.from(patchP.file("src/main/java")) { spec ->
-                    spec.include("**/*.java")
                 }
 
                 t.doLast {
@@ -236,48 +252,37 @@ class MultiversionPatchedSourceGeneration {
                 }
             }
 
-            TaskProvider<Sync> genRes = patchP.tasks.register("generatePatchedResources", Sync) { Sync t ->
+            TaskProvider<Task> genRes = patchP.tasks.register("generatePatchedResources") { Task t ->
                 t.group = "build setup"
                 t.description = "Generates merged resources for ${patchP.path} into build/patchedSrc."
-                t.into(outResDir)
-                t.duplicatesStrategy = DuplicatesStrategy.INCLUDE
 
-                // Exclude the resource patch config — it is a build-time instruction, not a mod resource
-                t.exclude("multiversion-resources.json")
+                t.doFirst {
+                    outResDir.get().asFile.deleteDir()
 
-                // 0) root-level shared resources for this module (optional)
-                if (sharedRes.exists()) {
-                    t.from(sharedRes) { spec ->
-                        spec.include("**/*")
+                    patchP.copy {
+                        duplicatesStrategy = DuplicatesStrategy.INCLUDE
+                        into(outResDir)
+
+                        // Exclude the resource patch config — it is a build-time instruction, not a mod resource
+                        exclude("multiversion-resources.json")
+
+                        // 0) root-level shared resources for this module (optional)
+                        if (sharedRes.exists()) {
+                            from(sharedRes) { spec -> spec.include("**/*") }
+                        }
+
+                        // 1) previous version layers — files overridden by any later layer are excluded
+                        resLayers.each { layer ->
+                            from(layer.dir as File) { spec ->
+                                spec.include("**/*")
+                                spec.exclude(layer.excluded as Collection)
+                            }
+                        }
+
+                        // 2) FINAL overlay: current version resources (never filtered)
+                        from(currentResSrcDir) { spec -> spec.include("**/*") }
                     }
-                }
 
-                // 1) previous version layers, files overridden by any later layer are excluded
-                for (int j = 0; j < i; j++) {
-                    String v = versions[j]
-                    File layerResDir = verToProj[v].file("src/main/resources")
-
-                    def overriddenByLaterRes = new LinkedHashSet<String>()
-                    for (int k = j + 1; k <= i; k++) {
-                        String key = versions[k]
-                        def s = relResByVer[key]
-                        if (s != null) overriddenByLaterRes.addAll(s as Collection)
-                    }
-
-                    t.from(layerResDir) { spec ->
-                        spec.include("**/*")
-                        spec.exclude(overriddenByLaterRes)
-                    }
-                }
-
-                // 2) FINAL overlay: current version resources (never filtered)
-                t.from(patchP.file("src/main/resources")) { spec ->
-                    spec.include("**/*")
-                }
-
-                t.doFirst { root.delete(t.destinationDir) }
-
-                t.doLast {
                     PatchingUtil.applyResourcePatch(
                             outResDir.get().asFile,
                             cumulativeResDeletes,

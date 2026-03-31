@@ -18,6 +18,7 @@ class OverwriteDuplicateClassHighlightFilter : HighlightInfoFilter {
 
     override fun accept(info: HighlightInfo, file: PsiFile?): Boolean {
         val javaFile = file as? PsiJavaFile ?: return true
+        if (!isMultiversionProject(javaFile.project)) return true
         if (info.severity != HighlightSeverity.ERROR) return true
 
         val description = info.description ?: return true

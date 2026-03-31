@@ -9,6 +9,8 @@
 mod-template/libs/
 
 ### IntelliJ IDEA ###
+**/.idea/
+*/.idea/
 .idea/
 .idea/modules.xml
 .idea/jarRepositories.xml

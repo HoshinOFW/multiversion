@@ -9,6 +9,7 @@ import com.intellij.psi.PsiManager
 
 class PatchedSrcEditorRedirectListener(private val project: Project) : FileEditorManagerListener {
     override fun fileOpened(source: FileEditorManager, file: VirtualFile) {
+        if (!isMultiversionProject(project)) return
         if (!file.path.replace('\\', '/').contains("/build/patchedSrc/")) return
         val origin = OriginMapCache.getInstance(project).mapToOrigin(file) ?: return
         ApplicationManager.getApplication().invokeLater {

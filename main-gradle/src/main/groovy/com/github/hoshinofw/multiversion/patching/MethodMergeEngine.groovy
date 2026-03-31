@@ -1,6 +1,7 @@
 package com.github.hoshinofw.multiversion.patching
 
-import com.github.javaparser.StaticJavaParser
+import com.github.javaparser.JavaParser
+import com.github.javaparser.ParserConfiguration
 import com.github.javaparser.ast.CompilationUnit
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration
 import com.github.javaparser.ast.body.FieldDeclaration
@@ -10,6 +11,10 @@ import com.github.javaparser.printer.DefaultPrettyPrinter
 import org.gradle.api.GradleException
 
 class MethodMergeEngine {
+
+    private static final JavaParser PARSER = new JavaParser(
+        new ParserConfiguration().setLanguageLevel(ParserConfiguration.LanguageLevel.BLEEDING_EDGE)
+    )
 
     static void processVersion(
             File currentSrcDir,
@@ -51,7 +56,7 @@ class MethodMergeEngine {
             String baseRelRoot,
             BufferedWriter mapOut
     ) {
-        CompilationUnit currentCU = StaticJavaParser.parse(currentFile)
+        CompilationUnit currentCU = PARSER.parse(currentFile).getResult().get()
         ClassOrInterfaceDeclaration currentCls = currentCU.findFirst(ClassOrInterfaceDeclaration.class).orElse(null)
         if (currentCls == null) return
 
@@ -69,7 +74,7 @@ class MethodMergeEngine {
                                currentCls.getFields().any  { it.getAnnotationByName("ShadowVersion").isPresent() }
         if (!hasOverwrite && !hasDelete && !hasShadow) return
 
-        CompilationUnit baseCU = StaticJavaParser.parse(baseFile)
+        CompilationUnit baseCU = PARSER.parse(baseFile).getResult().get()
         ClassOrInterfaceDeclaration baseCls = baseCU.findFirst(ClassOrInterfaceDeclaration.class).orElse(null)
         if (baseCls == null) return
 
