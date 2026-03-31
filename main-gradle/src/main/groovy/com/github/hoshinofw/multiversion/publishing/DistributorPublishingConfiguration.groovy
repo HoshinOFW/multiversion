@@ -29,14 +29,22 @@ class DistributorPublishingConfiguration {
         }
         if (cancel) return
 
+        boolean ungated = root.gradle.startParameter.taskNames.any { it.endsWith("publishAllMods") }
+
         root.tasks.register("publishAllSafe") {
             group = "distribution"
             description = "Publishes ALL collected jars to CurseForge + Modrinth (requires -PPUBLISH_RELEASE=true)."
             dependsOn("publishMods")
         }
 
+        root.tasks.register("publishAllMods") {
+            group = "distribution"
+            description = "Publishes ALL collected jars to CurseForge + Modrinth without a release gate."
+            dependsOn("publishMods")
+        }
+
         root.publishMods {
-            dryRun = !PublishUtil.requirePublishFlag(root)
+            dryRun = !ungated && !PublishUtil.requirePublishFlag(root)
 
             String mod_version = root.findProperty("mod_version").toString()
             String mod_name = root.findProperty("mod_name").toString()
@@ -132,8 +140,8 @@ class DistributorPublishingConfiguration {
 
         root.tasks.named("publishMods").configure {
             it.doFirst {
-                if (!root.findProperty("PUBLISH_RELEASE")) {
-                    logger.lifecycle("publishMods is running in DRY RUN mode. To actually publish: -PPUBLISH_RELEASE=true")
+                if (!ungated && !PublishUtil.requirePublishFlag(root)) {
+                    logger.lifecycle("publishMods is running in DRY RUN mode. Run publishAllMods or pass -PPUBLISH_RELEASE=true to actually publish.")
                 }
             }
         }
