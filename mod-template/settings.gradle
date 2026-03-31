@@ -4,9 +4,12 @@ pluginManagement {
     repositories {
         mavenLocal()
         mavenCentral()
+        maven {
+            url = uri("https://maven.hoshinofw.net/releases")
+        }
     }
 }
 
 plugins {
-    id "com.github.hoshinofw.multiversion.multiversion-settings"
+    id "com.github.hoshinofw.multiversion.multiversion-settings" //Add version
 }
