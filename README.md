@@ -7,7 +7,7 @@ The plugin also automatically sets up mod publishing to CurseForge and Modrinth 
 
 This repository includes a template mod, the Gradle plugin, the Gradle settings plugin, and an IntelliJ IDEA plugin.
 
-AI DISCLAIMER: A few parts of this project were written/assisted by AI. Specifically the documentation and debugging.
+AI DISCLAIMER: Parts of this project were written/assisted by AI. Especially the documentation and debugging.
 
 ---
 
@@ -347,12 +347,14 @@ The collected JARs are placed under `builds/<mod_version>/<minecraft_version>/<l
 
 An IntelliJ IDEA plugin is available on the JetBrains Marketplace, simply called Minecraft Multiversion Modding. It is strongly recommended. Without it you will run into false navigation and duplicate class errors caused by the multiple source sets.
 
-It provides:
-- Go to Declaration navigating to the correct original source file and line rather than the generated merged output
-- Suppression of duplicate class and false initialization errors that result from the version-specific source structure
-- `@DeleteMethodsAndFields` descriptor validation and Ctrl+Click navigation to the target method, field, or constructor
+- Remove false IDE errors.
+- Navigation support between versions
+- Method/field descriptor validation
+- Annotation validation
 - Support for refactoring classes, fields, and methods across versions.
 - Probably other things too, I don't update this list.
+
+It is strongly recommended you also use the Minecraft Development plugin, as it will provide support for actual mod dev. The Architectury plugin can also be quite useful.
 
 ---
 
