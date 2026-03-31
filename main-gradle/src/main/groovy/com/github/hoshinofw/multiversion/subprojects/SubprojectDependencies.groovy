@@ -16,7 +16,7 @@ class SubprojectDependencies {
         p.repositories.maven { url 'https://maven.hoshinofw.net/releases' }
 
         p.dependencies { DependencyHandler deps ->
-            compileOnly "com.github.hoshinofw.multiversion:multiversion-annotations:0.1.1"
+            compileOnly "com.github.hoshinofw.multiversion:multiversion-annotations:0.4.4"
 
             minecraft "net.minecraft:minecraft:$p.minecraft_version"
             mappings p.loom.officialMojangMappings()

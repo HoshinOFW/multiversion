@@ -6,7 +6,7 @@ plugins {
 
 base {
     group = "com.github.hoshinofw.multiversion"
-    version = "0.3.5"
+    version = "0.4.4"
 }
 
 java {
