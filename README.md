@@ -150,24 +150,44 @@ These directories are optional. If absent, the oldest version's sources serve as
 Version-specific classes support a set of Mixin-style annotations that let you write targeted patches instead of copying entire classes between versions. The Gradle plugin merges the version layers at build time with no runtime overhead.
 
 #### `@OverwriteVersion`
-Replaces a method or field from the previous version. Equivalent to `@Overwrite` in Mixin.
+Replaces a method, field, or constructor from the previous version. Equivalent to `@Overwrite` in Mixin.
 
 ```java
 @OverwriteVersion
 public static void init() {
     LOGGER.info("Initialized: version=1.21.1");
 }
+
+@OverwriteVersion
+public MyClass(String name) {
+    this.name = name + "_v2";
+}
 ```
 
 #### `@ShadowVersion`
-Declares a reference to a method or field that exists in the previous version, without replacing it. Equivalent to `@Shadow` in Mixin. Useful when a new method needs to call something from the base version.
+Declares a reference to a method, field, or constructor that exists in the previous version, without replacing it. Equivalent to `@Shadow` in Mixin. Useful when a new method needs to call something from the base version.
 
 Since shadow declarations are stubs, version classes can be marked `abstract` to avoid writing placeholder bodies. The merged output in patchedSrc keeps the original class modifier from the base version, so declaring your version class as `abstract` does not make the compiled class abstract.
 
+`native` is also usable as a way to bypass `abstract` being incompatible with `static`.
+
+`abstract` classes have another issue: `new MyClass()` might throw an error when called in the same version. If your code needs to call the constructor in the newer version, you have two options: Wrap the constructor in a static builder method in the base version, or stick purely to `native`.
+
+Therefore, both are usable, and it is strictly up to developer preference to choose pattern one over the other.
 ```java
 public abstract class MyClass {
-    @ShadowVersion public abstract static Logger LOGGER;
-    @ShadowVersion public abstract static void existingMethod();
+    //All of these are valid
+    @ShadowVersion public Logger LOGGER;
+    @ShadowVersion public static Logger LOGGER;
+    @ShadowVersion public static final Logger LOGGER2;
+    
+    @ShadowVersion public static void existingMethod() {}
+    @ShadowVersion public static native void otherMethod();
+    @ShadowVersion public abstract otherOtherMethod();
+    
+    //Native or abstract constructors are illegal... 
+    //So in this case you're forced to write an empty constructor.
+    @ShadowVersion public MyClass(String name) {}
 
     // New method that calls into the base version
     public void newMethod() {
@@ -177,13 +197,16 @@ public abstract class MyClass {
 ```
 
 #### `@DeleteMethodsAndFields`
-Removes specific methods or fields from the previous version. Useful when a method signature changes or something is no longer needed.
+Removes specific methods, fields, or constructors from the previous version. Useful when a method signature changes or something is no longer needed.
 Use a bare name for unambiguous targets, or `methodName(ParamType1, ParamType2)` to disambiguate overloads.
+To delete a constructor, use `init` as the name. If the class has multiple constructors, include the parameter types to disambiguate.
 
 ```java
-@DeleteMethodsAndFields({"oldMethod", "renamedMethod(int, String)"})
+@DeleteMethodsAndFields({"oldMethod", "renamedMethod(int, String)", "init(String)", "init()"})
 public class MyClass { ... }
 ```
+
+`init` alone (without parentheses) is also accepted when there is only one constructor to avoid ambiguity.
 
 #### `@DeleteClass`
 Removes the entire class from the merged output. Useful when a class is no longer needed in a newer version.
@@ -322,12 +345,14 @@ The collected JARs are placed under `builds/<mod_version>/<minecraft_version>/<l
 
 ### IDE plugin
 
-An IntelliJ IDEA plugin is available on the JetBrains Marketplace. It is strongly recommended. Without it you will run into false navigation and duplicate class errors caused by the multiple source sets.
+An IntelliJ IDEA plugin is available on the JetBrains Marketplace, simply called Minecraft Multiversion Modding. It is strongly recommended. Without it you will run into false navigation and duplicate class errors caused by the multiple source sets.
 
 It provides:
 - Go to Declaration navigating to the correct original source file and line rather than the generated merged output
 - Suppression of duplicate class and false initialization errors that result from the version-specific source structure
-- `@DeleteMethodsAndFields` descriptor validation and Ctrl+Click navigation to the target method or field
+- `@DeleteMethodsAndFields` descriptor validation and Ctrl+Click navigation to the target method, field, or constructor
+- Support for refactoring classes, fields, and methods across versions.
+- Probably other things too, I don't update this list.
 
 ---
 

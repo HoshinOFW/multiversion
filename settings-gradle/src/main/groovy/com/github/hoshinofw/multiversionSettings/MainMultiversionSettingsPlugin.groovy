@@ -32,7 +32,7 @@ class MainMultiversionSettingsPlugin implements Plugin<Settings> {
         versionDirs.each { File verDir ->
             String ver = verDir.name
 
-            // Include any subdirectory that looks like a module — either it has a build file
+            // Include any subdirectory that looks like a module: either it has a build file
             // (fully self-contained module) or a src/ directory (standard module configured
             // entirely by the main plugin's subprojects block, no build.gradle needed).
             // Which modules are configured and patched is declared in multiversionModules { }

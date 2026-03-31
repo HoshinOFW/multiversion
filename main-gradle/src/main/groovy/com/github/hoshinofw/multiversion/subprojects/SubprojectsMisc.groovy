@@ -42,7 +42,7 @@ class SubprojectsMisc {
         } else if (GeneralUtil.isNotBaseVersionModule(p)) {
             // Each common-type module may have a root-level shared source directory named
             // after the module itself (e.g. common/src/main/java, api/src/main/java).
-            // Only added if the directory actually exists — it is always optional.
+            // Only added if the directory actually exists (always optional).
             def sharedRoot = root.file(p.name)
 
             if (sharedRoot.exists()) {

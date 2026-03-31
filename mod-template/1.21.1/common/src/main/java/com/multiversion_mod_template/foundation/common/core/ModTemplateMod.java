@@ -4,10 +4,11 @@ package com.multiversion_mod_template.foundation.common.core;
 import com.github.hoshinofw.multiversion.DeleteMethodsAndFields;
 import com.github.hoshinofw.multiversion.OverwriteVersion;
 import com.github.hoshinofw.multiversion.ShadowVersion;
+import dev.architectury.platform.Mod;
 import org.slf4j.Logger;
 
 @DeleteMethodsAndFields({"TBDeleted"})
-public class ModTemplateMod {
+public abstract class ModTemplateMod {
 
     @ShadowVersion
     public static final String MOD_ID;

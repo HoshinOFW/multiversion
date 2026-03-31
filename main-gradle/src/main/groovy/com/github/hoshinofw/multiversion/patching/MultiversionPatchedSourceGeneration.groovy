@@ -20,7 +20,7 @@ class MultiversionPatchedSourceGeneration {
 
             List<String> patchModuleNames = mme.patchModules ?: []
             if (patchModuleNames.isEmpty()) {
-                root.logger.lifecycle("[patch] multiversionModules.patchModules is empty — patching disabled. " +
+                root.logger.lifecycle("[patch] multiversionModules.patchModules is empty; patching disabled. " +
                         "Declare patchModules in multiversionModules { } to enable.")
                 return
             }
@@ -64,16 +64,16 @@ class MultiversionPatchedSourceGeneration {
         // Warn about versions in the project that are missing this module
         allMcVersions.each { ver ->
             if (!moduleProjects.any { p -> GeneralUtil.mcVersion(p) == ver }) {
-                root.logger.warn("[patch] Module '${moduleName}' not found in version ${ver} — " +
+                root.logger.warn("[patch] Module '${moduleName}' not found in version ${ver}; " +
                         "that version will be skipped for this module.")
             }
         }
 
         if (moduleProjects.size() <= 1) {
             if (moduleProjects.isEmpty()) {
-                root.logger.warn("[patch] No projects found for patch module '${moduleName}' — skipping.")
+                root.logger.warn("[patch] No projects found for patch module '${moduleName}', skipping.")
             } else {
-                root.logger.lifecycle("[patch-${moduleName}] Only one version found — no patching needed.")
+                root.logger.lifecycle("[patch-${moduleName}] Only one version found; no patching needed.")
             }
             return
         }
@@ -85,7 +85,7 @@ class MultiversionPatchedSourceGeneration {
 
         List<String> versions = verToProj.keySet().toList().sort { a, b -> PatchingUtil.compareVer(a, b) }
 
-        // Root-level shared source directory for this module (optional — skipped if absent).
+        // Root-level shared source directory for this module (optional, skipped if absent).
         // For module 'common' this is common/src/main/java; for 'fabric' it is fabric/src/main/java, etc.
         File sharedJava = root.file("${moduleName}/src/main/java")
         File sharedRes  = root.file("${moduleName}/src/main/resources")
@@ -209,7 +209,7 @@ class MultiversionPatchedSourceGeneration {
                             }
                         }
 
-                        // 1) previous version layers — files overridden by any later layer are excluded
+                        // 1) previous version layers (files overridden by any later layer are excluded)
                         javaLayers.each { layer ->
                             from(layer.dir as File) { spec ->
                                 spec.include("**/*.java")
@@ -271,7 +271,7 @@ class MultiversionPatchedSourceGeneration {
                             from(sharedRes) { spec -> spec.include("**/*") }
                         }
 
-                        // 1) previous version layers — files overridden by any later layer are excluded
+                        // 1) previous version layers (files overridden by any later layer are excluded)
                         resLayers.each { layer ->
                             from(layer.dir as File) { spec ->
                                 spec.include("**/*")

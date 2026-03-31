@@ -48,7 +48,7 @@ class PatchingUtil {
      * Returns a map with "delete" (List&lt;String&gt;) and "move" (List&lt;Map&lt;String,String&gt;&gt;) keys.
      * Returns empty lists if the file is absent or malformed.
      *
-     * This method is intentionally decoupled from Project — it takes a plain File so it can
+     * This method is intentionally decoupled from Project. It takes a plain File so it can
      * be called for any module (common, fabric, forge, neoforge) without modification.
      */
     static Map<String, Object> loadResourcePatchConfig(File resourcesDir) {
@@ -132,7 +132,7 @@ class PatchingUtil {
             if (!fromFile.exists()) return
 
             if (currentVersionFiles.contains(toRel)) {
-                // Current version explicitly provides the destination — discard moved content
+                // Current version explicitly provides the destination, discard moved content
                 // but still remove the old path so it doesn't linger.
                 fromFile.delete()
                 return

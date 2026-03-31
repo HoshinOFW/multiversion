@@ -1,12 +1,21 @@
+<h2>0.4.6</h2>
+<ul>
+  <li><strong>Constructors</strong> All features now support constructors. See README.md for documentation.</li>
+</ul>
+
+<h2>0.4.5</h2>
+<ul>
+  <li><strong>BUG FIX</strong> Refactors wouldn't properly propagate back due to caches not updating.</li>
+</ul>
 
 <h2>0.4.4</h2>
 <ul>
-  <li><strong>BUG FIX</strong> — Fixed an IDE error on startup</li>
-  <li><strong>Rename propagation</strong> — renaming a method, field, or class in one version automatically renames it across all other version modules</li>
-  <li><strong><code>@Delete*</code> descriptor sync</strong> — renaming a method or field also updates its descriptor string inside <code>@DeleteMethodsAndFields</code> annotations in later versions, including parameter types</li>
-  <li><strong>Move propagation</strong> — moving a class to a different package propagates the package change and file relocation to all later version patch files</li>
-  <li><strong>Propagation toggle</strong> — a "Propagate to other Minecraft versions" checkbox in the rename dialog and in Settings → Tools → Multiversion controls whether cross-version propagation is active (on by default, persisted across sessions)</li>
-  <li><strong>Sentinel guard</strong> — all plugin features are now disabled in projects that do not have the multiversion annotations library on the classpath, preventing interference with unrelated codebases</li>
+  <li><strong>BUG FIX</strong> Fixed an IDE error on startup</li>
+  <li><strong>Rename propagation</strong> renaming a method, field, or class in one version automatically renames it across all other version modules</li>
+  <li><strong><code>@Delete*</code> descriptor sync</strong> renaming a method or field also updates its descriptor string inside <code>@DeleteMethodsAndFields</code> annotations in later versions, including parameter types</li>
+  <li><strong>Move propagation</strong> moving a class to a different package propagates the package change and file relocation to all later version patch files</li>
+  <li><strong>Propagation toggle</strong> a "Propagate to other Minecraft versions" checkbox in the rename dialog and in Settings → Tools → Multiversion controls whether cross-version propagation is active (on by default, persisted across sessions)</li>
+  <li><strong>Sentinel guard</strong> all plugin features are now disabled in projects that do not have the multiversion annotations library on the classpath, preventing interference with unrelated codebases</li>
 </ul>
 
 <h2>0.4.0</h2>

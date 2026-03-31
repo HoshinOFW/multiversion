@@ -96,7 +96,7 @@ class MultiversionRenameProcessor : RenamePsiElementProcessor() {
 
     /**
      * Extends the base reference search to also include [DeleteDescriptorReference]s embedded
-     * in @Delete* annotation string literals — IntelliJ's Java rename only searches IN_CODE
+     * in @Delete* annotation string literals. IntelliJ's Java rename only searches IN_CODE
      * contexts and never looks inside string literals, so we must do that explicitly.
      */
     override fun findReferences(
@@ -108,6 +108,8 @@ class MultiversionRenameProcessor : RenamePsiElementProcessor() {
             .toMutableList()
 
         if (element !is PsiMethod && element !is PsiField) return refs
+        // Constructors use a fixed "init" descriptor that never changes on rename
+        if (element is PsiMethod && element.isConstructor) return refs
         val name = (element as PsiNamedElement).name ?: return refs
 
         val file       = element.containingFile?.virtualFile ?: return refs

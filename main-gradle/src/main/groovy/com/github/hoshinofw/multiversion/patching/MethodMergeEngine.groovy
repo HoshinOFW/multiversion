@@ -4,6 +4,7 @@ import com.github.javaparser.JavaParser
 import com.github.javaparser.ParserConfiguration
 import com.github.javaparser.ast.CompilationUnit
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration
+import com.github.javaparser.ast.body.ConstructorDeclaration
 import com.github.javaparser.ast.body.FieldDeclaration
 import com.github.javaparser.ast.body.MethodDeclaration
 import com.github.javaparser.ast.expr.ArrayInitializerExpr
@@ -68,10 +69,12 @@ class MethodMergeEngine {
 
         if (!baseFile.exists()) return
 
-        boolean hasOverwrite = currentCls.getMethods().any { it.getAnnotationByName("OverwriteVersion").isPresent() }
+        boolean hasOverwrite = currentCls.getMethods().any      { it.getAnnotationByName("OverwriteVersion").isPresent() } ||
+                               currentCls.getConstructors().any { it.getAnnotationByName("OverwriteVersion").isPresent() }
         boolean hasDelete    = currentCls.getAnnotationByName("DeleteMethodsAndFields").isPresent()
-        boolean hasShadow    = currentCls.getMethods().any { it.getAnnotationByName("ShadowVersion").isPresent() } ||
-                               currentCls.getFields().any  { it.getAnnotationByName("ShadowVersion").isPresent() }
+        boolean hasShadow    = currentCls.getMethods().any      { it.getAnnotationByName("ShadowVersion").isPresent() } ||
+                               currentCls.getFields().any       { it.getAnnotationByName("ShadowVersion").isPresent() } ||
+                               currentCls.getConstructors().any { it.getAnnotationByName("ShadowVersion").isPresent() }
         if (!hasOverwrite && !hasDelete && !hasShadow) return
 
         CompilationUnit baseCU = PARSER.parse(baseFile).getResult().get()
@@ -82,10 +85,18 @@ class MethodMergeEngine {
         if (hasDelete) {
             for (String desc : extractDeleteMethodsAndFieldsDescriptors(currentCls)) {
                 String name = desc.contains("(") ? desc.substring(0, desc.indexOf("(")) : desc
-                boolean isField = !desc.contains("(") &&
+                boolean isField = name != "init" && !desc.contains("(") &&
                         baseCls.getFields().any { fd -> fd.getVariables().any { it.getNameAsString() == name } }
 
-                if (isField) {
+                if (name == "init") {
+                    // Constructor deletion
+                    List<String> params = desc.contains("(") ? parseParamTypes(desc) : null
+                    List<ConstructorDeclaration> ctors = baseCls.getConstructors()
+                    if (ctors.isEmpty()) throw new GradleException("@Delete: no constructors found in base for ${rel}")
+                    if (params == null && ctors.size() > 1)
+                        throw new GradleException("@Delete: 'init' in ${rel} has ${ctors.size()} constructors; add parameter types to disambiguate")
+                    findByParams(ctors, params ?: [], "init", rel).remove()
+                } else if (isField) {
                     FieldDeclaration f = baseCls.getFields().find { fd -> fd.getVariables().any { it.getNameAsString() == name } }
                     if (f == null) throw new GradleException("@Delete: field '${name}' not found in base for ${rel}")
                     f.remove()
@@ -94,7 +105,7 @@ class MethodMergeEngine {
                     List<MethodDeclaration> overloads = baseCls.getMethods().findAll { it.getNameAsString() == name }
                     if (overloads.isEmpty()) throw new GradleException("@Delete: method '${name}' not found in base for ${rel}")
                     if (params == null && overloads.size() > 1)
-                        throw new GradleException("@Delete: '${name}' in ${rel} has ${overloads.size()} overloads — add parameter types to disambiguate")
+                        throw new GradleException("@Delete: '${name}' in ${rel} has ${overloads.size()} overloads; add parameter types to disambiguate")
                     findByParams(overloads, params ?: [], name, rel).remove()
                 }
             }
@@ -102,6 +113,7 @@ class MethodMergeEngine {
 
         // --- @OverwriteVersion and implicit @Add ---
         Map<String, Integer> currentOrigins = [:]
+        Map<String, Integer> constructorOrigins = [:]
 
         currentCls.getMethods().each { MethodDeclaration method ->
             String desc = descriptor(method)
@@ -114,7 +126,7 @@ class MethodMergeEngine {
             }
 
             if (method.isAbstract() && !inBase && !baseCls.isAbstract()) {
-                throw new GradleException("Abstract method '${desc}' in ${rel} cannot be added to a non-abstract base class — annotate with @ShadowVersion if referencing a base method")
+                throw new GradleException("Abstract method '${desc}' in ${rel} cannot be added to a non-abstract base class. Annotate with @ShadowVersion if referencing a base method")
             }
 
             if (method.getAnnotationByName("OverwriteVersion").isPresent()) {
@@ -126,7 +138,7 @@ class MethodMergeEngine {
                 baseCls.getMembers().set(baseCls.getMembers().indexOf(target), method.clone())
                 currentOrigins[desc] = method.getBegin().map { it.line }.orElse(0)
             } else if (inBase) {
-                throw new GradleException("Method '${desc}' exists in both versions of ${rel} without @OverwriteVersion or @ShadowVersion — annotate it explicitly")
+                throw new GradleException("Method '${desc}' exists in both versions of ${rel} without @OverwriteVersion or @ShadowVersion. Annotate it explicitly")
             } else {
                 baseCls.addMember(method.clone())
                 currentOrigins[desc] = method.getBegin().map { it.line }.orElse(0)
@@ -154,6 +166,30 @@ class MethodMergeEngine {
             }
         }
 
+        currentCls.getConstructors().each { ConstructorDeclaration ctor ->
+            String desc = constructorDescriptor(ctor)
+            List<String> mParams = ctor.getParameters().collect { simpleTypeName(it.getTypeAsString()) }
+            boolean inBase = baseCls.getConstructors().any { paramsMatch(it, mParams) }
+
+            if (ctor.getAnnotationByName("ShadowVersion").isPresent()) {
+                if (!inBase) throw new GradleException("@ShadowVersion: constructor '${desc}' not found in base for ${rel}")
+                return // leave base's copy intact
+            }
+
+            if (ctor.getAnnotationByName("OverwriteVersion").isPresent()) {
+                if (!inBase) throw new GradleException("@OverwriteVersion: constructor '${desc}' not found in base for ${rel}")
+                def target = findByParams(baseCls.getConstructors(), mParams, "init", rel)
+                ctor.getAnnotationByName("OverwriteVersion").ifPresent { it.remove() }
+                baseCls.getMembers().set(baseCls.getMembers().indexOf(target), ctor.clone())
+                constructorOrigins[desc] = ctor.getBegin().map { it.line }.orElse(0)
+            } else if (inBase) {
+                throw new GradleException("Constructor '${desc}' exists in both versions of ${rel} without @OverwriteVersion or @ShadowVersion. Annotate it explicitly")
+            } else {
+                baseCls.addMember(ctor.clone())
+                constructorOrigins[desc] = ctor.getBegin().map { it.line }.orElse(0)
+            }
+        }
+
         // Merge imports
         currentCU.getImports().each { imp ->
             if (!baseCU.getImports().any { it.getNameAsString() == imp.getNameAsString() && it.isStatic() == imp.isStatic() })
@@ -162,7 +198,7 @@ class MethodMergeEngine {
 
         outFile.write(new DefaultPrettyPrinter().print(baseCU), "UTF-8")
 
-        // Write method-level origin entries
+        // Write method-level and constructor-level origin entries
         if (mapOut != null) {
             baseCls.getMethods().each { MethodDeclaration m ->
                 String desc = descriptor(m)
@@ -173,11 +209,24 @@ class MethodMergeEngine {
                     mapOut.write("${rel}#${desc}\t${baseRelRoot}/${rel}:${line}\n")
                 }
             }
+            baseCls.getConstructors().each { ConstructorDeclaration c ->
+                String desc = constructorDescriptor(c)
+                if (constructorOrigins.containsKey(desc)) {
+                    mapOut.write("${rel}#${desc}\t${currentSrcRelRoot}/${rel}:${constructorOrigins[desc]}\n")
+                } else {
+                    int line = c.getBegin().map { it.line }.orElse(0)
+                    mapOut.write("${rel}#${desc}\t${baseRelRoot}/${rel}:${line}\n")
+                }
+            }
         }
     }
 
     private static String descriptor(MethodDeclaration m) {
         "${m.getNameAsString()}(${m.getParameters().collect { simpleTypeName(it.getTypeAsString()) }.join(",")})"
+    }
+
+    private static String constructorDescriptor(ConstructorDeclaration c) {
+        "init(${c.getParameters().collect { simpleTypeName(it.getTypeAsString()) }.join(",")})"
     }
 
     private static List<String> extractDeleteMethodsAndFieldsDescriptors(ClassOrInterfaceDeclaration cls) {
@@ -210,7 +259,8 @@ class MethodMergeEngine {
         return dot >= 0 ? base.substring(dot + 1) : base
     }
 
-    private static boolean paramsMatch(MethodDeclaration m, List<String> expected) {
+    // Works for both MethodDeclaration and ConstructorDeclaration via duck typing
+    private static boolean paramsMatch(def m, List<String> expected) {
         def params = m.getParameters()
         if (params.size() != expected.size()) return false
         for (int i = 0; i < params.size(); i++) {
@@ -219,9 +269,10 @@ class MethodMergeEngine {
         return true
     }
 
-    private static MethodDeclaration findByParams(List<MethodDeclaration> overloads, List<String> params, String name, String rel) {
+    // Works for both MethodDeclaration and ConstructorDeclaration via duck typing
+    private static def findByParams(List overloads, List<String> params, String name, String rel) {
         if (params.isEmpty() && overloads.size() == 1) return overloads[0]
-        MethodDeclaration match = overloads.find { paramsMatch(it, params) }
+        def match = overloads.find { paramsMatch(it, params) }
         if (match == null) throw new GradleException("No overload '${name}(${params.join(", ")})' found in base for ${rel}")
         return match
     }

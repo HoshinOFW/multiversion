@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "com.github.hoshinofw.multiversion"
-version = "0.4.4"
+version = "0.4.6"
 
 repositories {
     mavenCentral()

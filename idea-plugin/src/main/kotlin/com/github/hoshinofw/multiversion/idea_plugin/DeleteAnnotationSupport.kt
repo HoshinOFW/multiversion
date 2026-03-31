@@ -46,6 +46,8 @@ class DeleteDescriptorReference(
 
     override fun handleElementRename(newElementName: String): PsiElement {
         val current = literal.value as? String ?: return literal
+        // Constructors use the fixed "init" keyword; the name never changes on a constructor rename
+        if (current == "init" || current.startsWith("init(")) return literal
         val parenIdx = current.indexOf('(')
         val newText = if (parenIdx >= 0) "$newElementName${current.substring(parenIdx)}" else newElementName
         return ElementManipulators.handleContentChange(literal, rangeInElement, newText)
@@ -68,7 +70,7 @@ class DeleteAnnotationInspection : LocalInspectionTool() {
                     val overloads = countMethodsByName(descriptor.substringBefore("("), prevClass)
                     when {
                         result == null && !descriptor.contains("(") && overloads > 1 ->
-                            holder.registerProblem(literal, "'${descriptor}' is ambiguous — ${overloads} overloads exist, specify parameter types")
+                            holder.registerProblem(literal, "'${descriptor}' is ambiguous: ${overloads} overloads exist, specify parameter types")
                         result == null ->
                             holder.registerProblem(literal, "'${descriptor}' not found in previous version of ${psiClass.name}")
                     }
@@ -118,6 +120,20 @@ fun resolveDescriptorInClass(descriptor: String, cls: PsiClass): PsiElement? {
     val name = descriptor.substringBefore("(")
     val hasParams = descriptor.contains("(")
 
+    if (name == "init") {
+        val ctors = cls.constructors
+        if (!hasParams) return if (ctors.size == 1) ctors[0] else null
+        val paramStr = descriptor.substringAfter("(").substringBeforeLast(")")
+        val expectedParams = if (paramStr.isBlank()) emptyList()
+        else paramStr.split(",").map { it.trim().substringAfterLast(".").replace("[]", "").replace("...", "") }
+        return ctors.find { ctor ->
+            val params = ctor.parameterList.parameters
+            params.size == expectedParams.size && params.zip(expectedParams).all { (p, expected) ->
+                p.type.presentableText.substringAfterLast(".").replace("[]", "").replace("...", "") == expected
+            }
+        }
+    }
+
     if (!hasParams) {
         val methods = cls.findMethodsByName(name, false)
         if (methods.size == 1) return methods[0]
@@ -160,7 +176,7 @@ private fun forEachDescriptorLiteral(annotation: PsiAnnotation, action: (PsiLite
 }
 
 private fun countMethodsByName(name: String, cls: PsiClass): Int =
-    cls.findMethodsByName(name, false).size
+    if (name == "init") cls.constructors.size else cls.findMethodsByName(name, false).size
 
 private fun compareVersionStrings(a: String, b: String): Int {
     val pa = a.split(".").mapNotNull { it.toIntOrNull() }
