@@ -44,9 +44,17 @@ class MultiversionMoveListener(private val project: Project) : RefactoringEventL
         if (!isMultiversionProject(project)) return
 
         // Move: save per-class state before the move.
+        // Elements may be PsiClass (F6 "Refactor → Move") or PsiJavaFile (project-view/drag move).
         val elements = beforeData?.getUserData(RefactoringEventData.PSI_ELEMENT_ARRAY_KEY)
         if (elements != null) {
-            elements.filterIsInstance<PsiClass>().forEach { cls ->
+            val classes = elements.flatMap { element ->
+                when (element) {
+                    is PsiClass    -> listOf(element)
+                    is PsiJavaFile -> element.classes.toList()
+                    else           -> emptyList()
+                }
+            }
+            classes.forEach { cls ->
                 val file       = cls.containingFile?.virtualFile ?: return@forEach
                 val srcRoot    = getVersionedSourceRoot(file)    ?: return@forEach
                 val moduleRoot = getVersionedModuleRoot(file)    ?: return@forEach
@@ -120,8 +128,8 @@ class MultiversionMoveListener(private val project: Project) : RefactoringEventL
                         val oldRelPath = "${move.oldFqn.replace('.', '/')}.java"
                         val newRelPath = "${newFqn.replace('.', '/')}.java"
 
-                        // Propagate file move to later version source files.
-                        for (laterRoot in findLaterVersionModuleRoots(move.moduleRoot)) {
+                        // Propagate file move to all other version source files.
+                        for (laterRoot in findAllVersionModuleRoots(move.moduleRoot).filter { it != move.moduleRoot }) {
                             val laterSrcRoot = laterRoot.findFileByRelativePath("src/main/java") ?: continue
                             val targetFile   = laterSrcRoot.findFileByRelativePath(oldRelPath)   ?: continue
                             val psiFile      = psiManager.findFile(targetFile) as? PsiJavaFile   ?: continue

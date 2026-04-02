@@ -1,3 +1,12 @@
+<h2>0.4.7</h2>
+<ul>
+  <li><strong>BUG FIX</strong> Ctrl+Click on <code>init</code> and <code>init(params)</code> descriptor strings inside <code>@DeleteMethodsAndFields</code> now navigates to the correct constructor declaration.</li>
+  <li><strong>BUG FIX</strong> Renaming a constructor no longer incorrectly triggers cross-version rename propagation, which would previously attempt to rename a non-existent method.</li>
+  <li><strong>BUG FIX</strong> Move refactoring now propagates to all other version modules, not just newer ones.</li>
+  <li><strong>BUG FIX</strong> Move refactoring now propagates when files are moved via the project view or drag-and-drop, not only when using Refactor &rarr; Move (F6).</li>
+  <li><strong>BUG FIX</strong> Opening a file in patchedSrc no longer redirects to the real source when the user is already browsing patchedSrc.</li>
+</ul>
+
 <h2>0.4.6</h2>
 <ul>
   <li><strong>Constructors</strong> All features now support constructors. See README.md for documentation.</li>

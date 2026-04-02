@@ -1,5 +1,6 @@
 package com.github.hoshinofw.multiversion.subprojects
 
+import com.github.hoshinofw.multiversion.PluginConstants
 import com.github.hoshinofw.multiversion.util.GeneralUtil
 import org.gradle.api.Project
 import org.gradle.api.artifacts.dsl.DependencyHandler
@@ -16,7 +17,7 @@ class SubprojectDependencies {
         p.repositories.maven { url 'https://maven.hoshinofw.net/releases' }
 
         p.dependencies { DependencyHandler deps ->
-            compileOnly "com.github.hoshinofw.multiversion:multiversion-annotations:0.4.7"
+            compileOnly "com.github.hoshinofw.multiversion:multiversion-annotations:${PluginConstants.ANNOTATIONS_VERSION}"
 
             minecraft "net.minecraft:minecraft:$p.minecraft_version"
             mappings p.loom.officialMojangMappings()

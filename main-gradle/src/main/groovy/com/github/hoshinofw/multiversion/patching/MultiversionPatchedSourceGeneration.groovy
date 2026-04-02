@@ -191,50 +191,67 @@ class MultiversionPatchedSourceGeneration {
                 t.description = "Generates merged Java sources for ${patchP.path} into build/patchedSrc."
 
                 t.doFirst {
-                    outJavaDir.get().asFile.deleteDir()
+                    try {
+                        outJavaDir.get().asFile.deleteDir()
 
-                    mapFile.parentFile.mkdirs()
-                    if (mapTmp.exists()) mapTmp.delete()
-                    mapOut = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(mapTmp, false), "UTF-8"))
+                        mapFile.parentFile.mkdirs()
+                        if (mapTmp.exists()) mapTmp.delete()
+                        mapOut = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(mapTmp, false), "UTF-8"))
 
-                    patchP.copy {
-                        duplicatesStrategy = DuplicatesStrategy.INCLUDE
-                        into(outJavaDir)
+                        patchP.copy {
+                            duplicatesStrategy = DuplicatesStrategy.INCLUDE
+                            into(outJavaDir)
 
-                        // 0) root-level shared Java for this module (optional)
-                        if (sharedJava.exists()) {
-                            from(sharedJava) { spec ->
+                            // 0) root-level shared Java for this module (optional)
+                            if (sharedJava.exists()) {
+                                from(sharedJava) { spec ->
+                                    spec.include("**/*.java")
+                                    spec.eachFile { d -> record(sharedJava, d.relativePath.pathString) }
+                                }
+                            }
+
+                            // 1) previous version layers (files overridden by any later layer are excluded)
+                            javaLayers.each { layer ->
+                                from(layer.dir as File) { spec ->
+                                    spec.include("**/*.java")
+                                    spec.exclude(layer.excluded as Collection)
+                                    spec.eachFile { d -> record(layer.dir as File, d.relativePath.pathString) }
+                                }
+                            }
+
+                            // 2) FINAL overlay: current version sources (never filtered)
+                            from(currentJavaSrcDir) { spec ->
                                 spec.include("**/*.java")
-                                spec.eachFile { d -> record(sharedJava, d.relativePath.pathString) }
+                                spec.eachFile { d -> record(currentJavaSrcDir, d.relativePath.pathString) }
                             }
                         }
-
-                        // 1) previous version layers (files overridden by any later layer are excluded)
-                        javaLayers.each { layer ->
-                            from(layer.dir as File) { spec ->
-                                spec.include("**/*.java")
-                                spec.exclude(layer.excluded as Collection)
-                                spec.eachFile { d -> record(layer.dir as File, d.relativePath.pathString) }
-                            }
-                        }
-
-                        // 2) FINAL overlay: current version sources (never filtered)
-                        from(currentJavaSrcDir) { spec ->
-                            spec.include("**/*.java")
+                    } catch (Exception e) {
+                        if (project.gradle.taskGraph.allTasks.any { it.name == "generateAllPatchedSrc" }) {
+                            logger.warn("[patch-${moduleName}] patchedSrc copy failed for ${patchP.path} (sync will continue): ${e.message}")
+                        } else {
+                            throw e
                         }
                     }
                 }
 
                 t.doLast {
-                    MethodMergeEngine.processVersion(mergeCurrentSrcDir, mergeBaseDir, outJavaDir.get().asFile, mergeCurrentRelRoot, mergeBaseRelRoot, mapOut)
-
                     try {
-                        if (mapOut != null) {
-                            mapOut.flush()
-                            mapOut.close()
+                        MethodMergeEngine.processVersion(mergeCurrentSrcDir, mergeBaseDir, outJavaDir.get().asFile, mergeCurrentRelRoot, mergeBaseRelRoot, mapOut)
+                    } catch (Exception e) {
+                        if (project.gradle.taskGraph.allTasks.any { it.name == "generateAllPatchedSrc" }) {
+                            logger.warn("[patch-${moduleName}] patchedSrc merge failed for ${patchP.path} (sync will continue): ${e.message}")
+                        } else {
+                            throw e
                         }
                     } finally {
-                        mapOut = null
+                        try {
+                            if (mapOut != null) {
+                                mapOut.flush()
+                                mapOut.close()
+                            }
+                        } finally {
+                            mapOut = null
+                        }
                     }
 
                     if (!mapTmp.exists() || mapTmp.length() == 0L) {
@@ -257,38 +274,46 @@ class MultiversionPatchedSourceGeneration {
                 t.description = "Generates merged resources for ${patchP.path} into build/patchedSrc."
 
                 t.doFirst {
-                    outResDir.get().asFile.deleteDir()
+                    try {
+                        outResDir.get().asFile.deleteDir()
 
-                    patchP.copy {
-                        duplicatesStrategy = DuplicatesStrategy.INCLUDE
-                        into(outResDir)
+                        patchP.copy {
+                            duplicatesStrategy = DuplicatesStrategy.INCLUDE
+                            into(outResDir)
 
-                        // Exclude the resource patch config — it is a build-time instruction, not a mod resource
-                        exclude("multiversion-resources.json")
+                            // Exclude the resource patch config; it is a build-time instruction, not a mod resource
+                            exclude("multiversion-resources.json")
 
-                        // 0) root-level shared resources for this module (optional)
-                        if (sharedRes.exists()) {
-                            from(sharedRes) { spec -> spec.include("**/*") }
-                        }
-
-                        // 1) previous version layers (files overridden by any later layer are excluded)
-                        resLayers.each { layer ->
-                            from(layer.dir as File) { spec ->
-                                spec.include("**/*")
-                                spec.exclude(layer.excluded as Collection)
+                            // 0) root-level shared resources for this module (optional)
+                            if (sharedRes.exists()) {
+                                from(sharedRes) { spec -> spec.include("**/*") }
                             }
+
+                            // 1) previous version layers (files overridden by any later layer are excluded)
+                            resLayers.each { layer ->
+                                from(layer.dir as File) { spec ->
+                                    spec.include("**/*")
+                                    spec.exclude(layer.excluded as Collection)
+                                }
+                            }
+
+                            // 2) FINAL overlay: current version resources (never filtered)
+                            from(currentResSrcDir) { spec -> spec.include("**/*") }
                         }
 
-                        // 2) FINAL overlay: current version resources (never filtered)
-                        from(currentResSrcDir) { spec -> spec.include("**/*") }
+                        PatchingUtil.applyResourcePatch(
+                                outResDir.get().asFile,
+                                cumulativeResDeletes,
+                                cumulativeResMoves,
+                                patchVerResFiles
+                        )
+                    } catch (Exception e) {
+                        if (project.gradle.taskGraph.allTasks.any { it.name == "generateAllPatchedSrc" }) {
+                            logger.warn("[patch-${moduleName}] patchedSrc resources failed for ${patchP.path} (sync will continue): ${e.message}")
+                        } else {
+                            throw e
+                        }
                     }
-
-                    PatchingUtil.applyResourcePatch(
-                            outResDir.get().asFile,
-                            cumulativeResDeletes,
-                            cumulativeResMoves,
-                            patchVerResFiles
-                    )
                 }
             }
 
