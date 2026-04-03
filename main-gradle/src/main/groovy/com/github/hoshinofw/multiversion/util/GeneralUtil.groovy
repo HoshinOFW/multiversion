@@ -86,27 +86,53 @@ class GeneralUtil {
      * for any module name listed under {@code multiversionModules { common = [...] }}.
      */
     static boolean isCommon(Project p) {
-        if (p.name == 'common') return true
         MultiversionModulesExtension mme = modulesExt(p)
-        return mme?.isConfigured() && mme.loaderTypeOf(p.name) == 'common'
+        if (mme?.isConfigured()) return mme.loaderTypeOf(p.name) == 'common'
+        return p.name == 'common'
     }
 
     static boolean isFabric(Project p) {
-        if (p.name == 'fabric') return true
         MultiversionModulesExtension mme = modulesExt(p)
-        return mme?.isConfigured() && mme.loaderTypeOf(p.name) == 'fabric'
+        if (mme?.isConfigured()) return mme.loaderTypeOf(p.name) == 'fabric'
+        return p.name == 'fabric'
     }
 
     static boolean isForge(Project p) {
-        if (p.name == 'forge') return true
         MultiversionModulesExtension mme = modulesExt(p)
-        return mme?.isConfigured() && mme.loaderTypeOf(p.name) == 'forge'
+        if (mme?.isConfigured()) return mme.loaderTypeOf(p.name) == 'forge'
+        return p.name == 'forge'
     }
 
     static boolean isNeoForge(Project p) {
-        if (p.name == 'neoforge') return true
         MultiversionModulesExtension mme = modulesExt(p)
-        return mme?.isConfigured() && mme.loaderTypeOf(p.name) == 'neoforge'
+        if (mme?.isConfigured()) return mme.loaderTypeOf(p.name) == 'neoforge'
+        return p.name == 'neoforge'
+    }
+
+    /**
+     * Returns the loader type of the project: {@code "common"}, {@code "fabric"},
+     * {@code "forge"}, or {@code "neoforge"}. Returns {@code null} if the project
+     * is not a recognized versioned module.
+     */
+    static String moduleType(Project p) {
+        MultiversionModulesExtension mme = modulesExt(p)
+        String type = mme?.isConfigured() ? mme.loaderTypeOf(p.name) : p.name
+        return type in ['common', 'fabric', 'forge', 'neoforge'] ? type : null
+    }
+
+    /**
+     * Returns the display name of the module type: {@code "Common"}, {@code "Fabric"},
+     * {@code "Forge"}, or {@code "NeoForge"}. Returns {@code null} if the project
+     * is not a recognized versioned module.
+     */
+    static String moduleTypeCapitalized(Project p) {
+        switch (moduleType(p)) {
+            case 'common':   return 'Common'
+            case 'fabric':   return 'Fabric'
+            case 'forge':    return 'Forge'
+            case 'neoforge': return 'NeoForge'
+            default:         return null
+        }
     }
 
     static final List<String> minimumRequiredProperties = [
@@ -154,9 +180,9 @@ class GeneralUtil {
      * for any module name declared in {@code multiversionModules}.
      */
     static boolean isNotBaseVersionModule(Project p) {
-        if (p.name in ['common', 'fabric', 'forge', 'neoforge']) return true
         MultiversionModulesExtension mme = modulesExt(p)
-        return mme?.isConfigured() && mme.allModules().contains(p.name)
+        if (mme?.isConfigured()) return mme.allModules().contains(p.name)
+        return p.name in ['common', 'fabric', 'forge', 'neoforge']
     }
 
     static String mcVersion(Project p) {

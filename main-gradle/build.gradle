@@ -6,14 +6,12 @@ plugins {
 
 base {
     group = "com.github.hoshinofw.multiversion"
-    version = "0.4.8"
+    version = "0.4.12"
 }
 
 def annotationsVersion = findProperty("multiversion_annotations_version") ?: version
 
 def generatedConstantsDir = layout.buildDirectory.dir("generated/sources/plugin-constants/groovy/main")
-
-
 
 java {
     toolchain { languageVersion = JavaLanguageVersion.of(21) }

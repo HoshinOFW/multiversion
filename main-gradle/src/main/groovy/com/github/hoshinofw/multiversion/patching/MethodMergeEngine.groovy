@@ -90,6 +90,7 @@ class MethodMergeEngine {
         if (currentCls.getAnnotationByName("DeleteMethodsAndFields").isPresent())
             applyDeletes(currentCls, baseCls, rel)
 
+        mergeInheritance(currentCls, baseCls)
         mergeSharedMembers(currentCls, baseCls, rel, currentSrcRelRoot, baseRelRoot, mapOut)
         mergeEnumEntries(currentCls, baseCls, rel, currentSrcRelRoot, baseRelRoot, mapOut)
         mergeAnnotationTypeMembers(currentCls, baseCls, rel, currentSrcRelRoot, baseRelRoot, mapOut)
@@ -308,12 +309,31 @@ class MethodMergeEngine {
         }
     }
 
+    // ---- Inheritance merging ----
+    // Replaces the base class's extends/implements with the current version's when
+    // @OverwriteInheritance is present. No-op for annotation types (no inheritance).
+
+    private static void mergeInheritance(def currentCls, def baseCls) {
+        if (!currentCls.getAnnotationByName("OverwriteInheritance").isPresent()) return
+
+        if (currentCls instanceof ClassOrInterfaceDeclaration && baseCls instanceof ClassOrInterfaceDeclaration) {
+            baseCls.getExtendedTypes().clear()
+            currentCls.getExtendedTypes().each { baseCls.getExtendedTypes().add(it.clone()) }
+            baseCls.getImplementedTypes().clear()
+            currentCls.getImplementedTypes().each { baseCls.getImplementedTypes().add(it.clone()) }
+        } else if (baseCls.respondsTo('getImplementedTypes')) {
+            // EnumDeclaration, RecordDeclaration: implements only, no extends
+            baseCls.getImplementedTypes().clear()
+            currentCls.getImplementedTypes().each { baseCls.getImplementedTypes().add(it.clone()) }
+        }
+    }
+
     // ---- Class-level annotation merging ----
     // Current version wins for any annotation it declares: if the base also has it, the base's
     // copy is replaced. Annotations only in the base are left intact. Multiversion processing
     // annotations are excluded since they are directives, not output annotations.
 
-    private static final Set<String> PROCESSING_ANNOTATIONS = ["DeleteMethodsAndFields", "DeleteClass"] as Set
+    private static final Set<String> PROCESSING_ANNOTATIONS = ["DeleteMethodsAndFields", "DeleteClass", "OverwriteInheritance"] as Set
 
     private static void mergeClassAnnotations(def currentCls, def baseCls) {
         currentCls.getAnnotations().each { currentAnn ->
@@ -369,6 +389,7 @@ class MethodMergeEngine {
         getEnumEntries(cls).any   { it.getAnnotationByName("OverwriteVersion").isPresent() || it.getAnnotationByName("ShadowVersion").isPresent() } ||
         getAnnotationMembers(cls).any { it.getAnnotationByName("OverwriteVersion").isPresent() || it.getAnnotationByName("ShadowVersion").isPresent() } ||
         cls.getAnnotationByName("DeleteMethodsAndFields").isPresent() ||
+        cls.getAnnotationByName("OverwriteInheritance").isPresent() ||
         cls.getAnnotations().any  { !(it.getNameAsString() in PROCESSING_ANNOTATIONS) }
     }
 

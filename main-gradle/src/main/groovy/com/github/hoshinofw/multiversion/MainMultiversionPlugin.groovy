@@ -24,6 +24,12 @@ class MainMultiversionPlugin implements Plugin<Project> {
         MultiversionResourcesExtension multiversionResourcesExtension = target.extensions.create("multiversionResources", MultiversionResourcesExtension)
         MultiversionModulesExtension multiversionModulesExtension = target.extensions.create("multiversionModules", MultiversionModulesExtension)
 
+        // Register on every project so multiversion.isFabric() etc. resolve correctly
+        // both inside subprojects{} blocks and in individual subproject build.gradle files.
+        target.allprojects { p ->
+            p.extensions.create("multiversion", MultiversionProjectExtension, p)
+        }
+
         // Always register the anchor task so the beforeSync IDE trigger never breaks sync,
         // even if the plugin is later removed or patchModules is emptied.
         TaskProvider<Task> genAll = target.tasks.register("generateAllPatchedSrc") {
@@ -34,7 +40,7 @@ class MainMultiversionPlugin implements Plugin<Project> {
         target.plugins.withId("org.jetbrains.gradle.plugin.idea-ext") {
             target.idea.project.settings {
                 it.taskTriggers {
-                    it.beforeSync(genAll)
+                    it.afterSync(genAll)
                 }
             }
         }

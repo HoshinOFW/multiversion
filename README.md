@@ -7,6 +7,10 @@ The plugin also automatically sets up mod publishing to CurseForge and Modrinth 
 
 This repository includes a template mod, the Gradle plugin, the Gradle settings plugin, and an IntelliJ IDEA plugin.
 
+This whole project is still in active development, and some things regarding resource management have not yet been thoroughly tested in production, even if the code is theoretically sound.
+If you have a suggestion, please open a suggestion in the github repository issues page.
+However, please check todo.md to make sure it is not already planned.
+
 AI DISCLAIMER: Parts of this project were written/assisted by AI. Especially the documentation and debugging.
 
 ---
@@ -55,40 +59,62 @@ multiversionResources {
 
 #### Subproject dependency resolution
 
-The plugin exposes utility methods for cleanly routing dependencies by platform and Minecraft version inside a `subprojects {}` block, without needing to hard-code project path strings.
+The plugin registers a `multiversion` extension on every project, exposing utility methods for cleanly routing configuration by platform and Minecraft version. No import is needed.
+
+`subprojects {}` iterates every subproject including version-group projects (`:1.20.1`, `:1.21.1`) which do not have Loom applied. Always guard Loom-specific configurations such as `modImplementation` with `multiversion.isVersionedModule()`:
 
 ```groovy
-import com.github.hoshinofw.multiversion.util.GeneralUtil
-
 subprojects {
+    if (!multiversion.isVersionedModule()) return
+
     dependencies {
         // loader-based routing
-        if (GeneralUtil.isCommon(project)) {
-            // Common module deps
+        if (multiversion.isCommon()) {
+            // common module deps
         }
-        if (GeneralUtil.isFabric(project)) {
-            // Fabric api is handled automatically
-            // Other fabric-specific deps
+        if (multiversion.isFabric()) {
+            // Fabric API is handled automatically; add other Fabric-specific deps here
+            modImplementation "..."
         }
-        if (GeneralUtil.isForge(project)) {
-            // forge-specific deps
+        if (multiversion.isForge()) {
+            // Forge-specific deps
         }
-        if (GeneralUtil.isNeoForge(project)) {
-            // neoforge-specific deps
+        if (multiversion.isNeoForge()) {
+            // NeoForge-specific deps
         }
 
         // version-based routing
-        if (GeneralUtil.isMcVersion(project, "1.20.1")) {
+        if (multiversion.isMcVersion("1.20.1")) {
             // 1.20.1-only deps
         }
-        if (GeneralUtil.isMcVersion(project, "1.21.1")) {
+        if (multiversion.isMcVersion("1.21.1")) {
             // 1.21.1-only deps
         }
     }
 }
 ```
 
-`GeneralUtil.mcVersion(project)` returns the version string (e.g. `"1.20.1"`) if you need it for dynamic version-specific logic.
+The same methods are available in individual subproject `build.gradle` files, where the guard is not needed since the file only applies to that specific module:
+
+```groovy
+// 1.21.1/fabric/build.gradle
+modImplementation "..."
+```
+
+`multiversion.mcVersion()` returns the version string (e.g. `"1.20.1"`) if you need it for dynamic logic.
+
+`multiversion.moduleType()` returns the loader type string (`"common"`, `"fabric"`, `"forge"`, or `"neoforge"`), or `null` if the project is not a recognized versioned module. Useful for switch-style dispatch:
+
+```groovy
+subprojects {
+    switch (multiversion.moduleType()) {
+        case "fabric":   /* ... */; break
+        case "neoforge": /* ... */; break
+    }
+}
+```
+
+When `multiversionModules` is configured, `isFabric()`, `isForge()`, etc. resolve based on the declared loader type for that module name — not the directory name. A module named `fabric-custom` declared under `fabric = ['fabric-custom']` returns `true` from `isFabric()`.
 
 ---
 
@@ -207,6 +233,20 @@ public class MyClass { ... }
 ```
 
 `init` alone (without parentheses) is also accepted when there is only one constructor to avoid ambiguity.
+
+#### `@OverwriteInheritance`
+Replaces the base version's `extends` and `implements` clauses with this version's declarations. Use when a class changes its parent or the set of interfaces it implements between versions. The entire inheritance declaration is replaced — to remove an interface, simply omit it.
+
+```java
+// 1.20.1/common — base version
+public class MyRenderer extends OldRenderer implements OldInterface { ... }
+
+// 1.21.1/common — changes parent and drops OldInterface
+@OverwriteInheritance
+public class MyRenderer extends NewRenderer implements NewInterface { ... }
+```
+
+Works for classes, interfaces (extends), enums (implements), and records (implements). Annotation types have no inheritance and are unaffected.
 
 #### `@DeleteClass`
 Removes the entire class from the merged output. Useful when a class is no longer needed in a newer version.
@@ -340,6 +380,24 @@ Collect the JARs, then publish:
 Without `-PPUBLISH_RELEASE=true` the publish task runs in dry-run mode and does not upload anything. This is useful for checking that credentials and properties are wired correctly before committing to a release.
 
 The collected JARs are placed under `builds/<mod_version>/<minecraft_version>/<loader>/` and are what gets uploaded. You can inspect them before publishing.
+
+---
+
+### Development flow
+
+patchedSrc is the merged source tree that the IDE uses for error checking, navigation, and compilation. It is not generated automatically on every file save — you need to run `generateAllPatchedSrc` to bring it up to date after making changes across versions.
+
+```bash
+./gradlew generateAllPatchedSrc
+```
+
+This task runs automatically on two occasions:
+- **After Gradle sync** — so the IDE always has an up-to-date patchedSrc when you open or refresh the project.
+- **On build** — compilation always uses the latest merged output.
+
+If you edit a version-specific class and the IDE is showing stale errors or missing members in patchedSrc, run `generateAllPatchedSrc` manually (or re-sync) to regenerate it.
+
+> **Planned:** Future versions of the IDE plugin will regenerate the relevant patchedSrc file automatically in the background whenever a versioned source file is saved, removing the need to run the task manually during active development.
 
 ---
 

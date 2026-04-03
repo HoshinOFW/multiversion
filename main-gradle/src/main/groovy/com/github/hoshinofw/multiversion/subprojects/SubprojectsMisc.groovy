@@ -7,6 +7,15 @@ class SubprojectsMisc {
 
     static void configure(Project p, Project root, int count) {
         GeneralUtil.ensureNotNull(root, "SubprojectsMisc: #$count")
+        // shadowBundle is available on all versioned modules so subprojects {} blocks
+        // can use it uniformly without guarding against common vs platform.
+        p.configurations {
+            shadowBundle {
+                canBeResolved = true
+                canBeConsumed = false
+            }
+        }
+
         if (!GeneralUtil.isCommon(p)) {
             p.configurations {
                 common {
@@ -22,15 +31,8 @@ class SubprojectsMisc {
                 } else if (GeneralUtil.isNeoForge(p)) {
                     developmentNeoForge.extendsFrom common
                 }
-
-                shadowBundle {
-                    canBeResolved = true
-                    canBeConsumed = false
-                }
             }
-        }
 
-        if (!GeneralUtil.isCommon(p)) {
             p.shadowJar {
                 configurations = [p.configurations.shadowBundle]
                 archiveClassifier = 'dev-shadow'

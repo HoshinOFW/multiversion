@@ -1,6 +1,5 @@
 ### Observed Bugs:
-- Move refactor is not propagating forwards properly. It doesn't seem to propagate well at all.
-- It appears that generateAllPatchedSrc is being thrown twice per sync sometimes.
+
 
 ### Test:
 - Test refactoring support for all classes.
@@ -43,6 +42,7 @@
 - Add IDE suggestions via a small warning, such as `Missing original annotations` on hover for methods/fields that have @ShadowVersion and the original is also @Foo. The warning would have a button you can use to copy the annotations over.
 - Add more IDE suggestions such as: `Method found in original class, but no @ShadowVersion or @OverwriteVersion provided` which would then have a button to add @ShadowVersion
   - The same thing for @ModifyClass when that gets added.
+- Redirect all errors from patchedSrc to their code origins. In the problems page, but also when exploring the original code.
 
 ### IDE Major Features:
 
