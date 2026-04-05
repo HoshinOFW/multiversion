@@ -28,12 +28,9 @@
                                    order="first"/>
     </extensions>
 
-    <applicationListeners>
+    <projectListeners>
         <listener class="com.github.hoshinofw.multiversion.idea_plugin.MultiversionOnSaveListener"
                   topic="com.intellij.openapi.fileEditor.FileDocumentManagerListener"/>
-    </applicationListeners>
-
-    <projectListeners>
         <listener class="com.github.hoshinofw.multiversion.idea_plugin.PatchedSrcEditorRedirectListener"
                   topic="com.intellij.openapi.fileEditor.FileEditorManagerListener"/>
         <listener class="com.github.hoshinofw.multiversion.idea_plugin.MultiversionMoveListener"

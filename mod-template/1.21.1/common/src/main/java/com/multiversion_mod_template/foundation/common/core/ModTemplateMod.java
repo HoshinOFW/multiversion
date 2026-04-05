@@ -11,7 +11,7 @@ import org.slf4j.Logger;
 public abstract class ModTemplateMod {
 
     @ShadowVersion
-    public static final String MOD_ID = "";
+    public static final String MOD_ID;
     @ShadowVersion
     public static final Logger LOGGER;
 

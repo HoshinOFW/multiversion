@@ -7,14 +7,16 @@ import com.intellij.notification.NotificationType
 import com.intellij.openapi.editor.Document
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileDocumentManagerListener
-import com.intellij.openapi.project.ProjectLocator
+import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VfsUtil
 import java.io.File
-import java.nio.file.Path
+import java.nio.file.Paths
 
-class MultiversionOnSaveListener : FileDocumentManagerListener {
+class MultiversionOnSaveListener(private val project: Project) : FileDocumentManagerListener {
 
     override fun beforeDocumentSaving(document: Document) {
+        if (!isMultiversionProject(project)) return
+
         val vFile = FileDocumentManager.getInstance().getFile(document) ?: return
         if (vFile.extension != "java") return
 
@@ -24,7 +26,7 @@ class MultiversionOnSaveListener : FileDocumentManagerListener {
 
         val sourceRoot = getVersionedSourceRoot(vFile) ?: return
         val rel = try {
-            Path.of(sourceRoot.path).relativize(Path.of(vFile.path))
+            Paths.get(sourceRoot.path).relativize(Paths.get(vFile.path))
                 .toString().replace('\\', '/')
         } catch (_: Exception) { return }
 
@@ -34,7 +36,8 @@ class MultiversionOnSaveListener : FileDocumentManagerListener {
         // beforeDocumentSaving fires before the file is written to disk, so we cannot read from
         // vFile.path — it still holds the previous content.  Write the in-memory document text
         // to a temp file and use that as the "current" input for the engine.
-        val tmpFile = kotlin.io.path.createTempFile("mv_", ".java").toFile()
+        //TODO allow engine to accept document text instead of only paths.
+        val tmpFile = File.createTempFile("mv_", ".java")
         try {
             tmpFile.writeText(document.text, Charsets.UTF_8)
             
@@ -43,7 +46,6 @@ class MultiversionOnSaveListener : FileDocumentManagerListener {
                 config.currentSrcRelRoot, config.baseRelRoot, null
             )
         } catch (e: MergeException) {
-            val project = ProjectLocator.getInstance().guessProjectForFile(vFile)
             NotificationGroupManager.getInstance()
                 .getNotificationGroup("Multiversion")
                 .createNotification("Merge error in $rel: ${e.message}", NotificationType.WARNING)
@@ -54,7 +56,6 @@ class MultiversionOnSaveListener : FileDocumentManagerListener {
             tmpFile.delete()
         }
 
-        // Refresh the VFS entry so IntelliJ re-indexes the updated patchedSrc file
-        VfsUtil.findFileByIoFile(outFile, false)?.refresh(true, false)
+        VfsUtil.findFileByIoFile(outFile, true)
     }
 }

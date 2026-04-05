@@ -6,47 +6,6 @@
 - Test class types such as record, interface, etc. Make sure they work properly
 - Test rename refactor for constructors.
 
-### Implementation Plans:
-- **Shared MergeEngine library** - extract the patching engine out of main-gradle into a standalone Kotlin library
-  that both the Gradle plugin and the IDE plugin can depend on.
-
-  99% of the gradle plugin is javaParser and IO.
-  The annotations library should stay separate (it is a compile-only dep for mod users; bundling JavaParser into
-  their compile classpath would be wrong).
-
-  Proposed module layout:
-  ```
-  multiversion/
-    main-gradle/                  (Gradle plugin - depends on merge-engine)
-    idea-plugin/                  (IDE plugin - bundles merge-engine as a dependency)
-    multiversion-annotations/     (unchanged - compile-only for mod users)
-    merge-engine/                 (NEW - Kotlin, single external dep: javaparser-core)
-  ```
-
-  **Implementation plan:**
-
-  Phase 1 - Extract engine: COMPLETE
-  - Create `merge-engine/` subproject, published to the same Maven repo
-  - Port `MethodMergeEngine.groovy` to Kotlin, expose a clean public API (`MergeEngine.processVersion(...)`)
-  - Replace `GradleException` with `MergeException : RuntimeException`
-  - Extend the engine to also accept a single file path so a save of `Foo.java` only re-merges that one file
-    across versions, not the entire source directory
-  - Update Gradle plugin to call the library instead of the inlined Groovy class
-  - Bundle the library JAR in the IDE plugin.
-
-  Phase 2 - Config bridge (required for on-save):
-  - Add a Gradle task that writes `build/multiversion-engine-config.json` per version module
-    containing: base version path, all version module paths in order, patchedSrc output path
-  - IDE plugin reads this file lazily (cached, invalidated on modification) to understand project structure
-    without needing to parse the Gradle DSL
-
-  Phase 3 - On-save integration in the IDE plugin:
-  - Implement `FileDocumentManagerListener.beforeDocumentSaving`
-  - Detect if the saved file is in a versioned source root (already have `getVersionedSourceRoot`)
-  - Read the config file to get merge parameters
-  - Call `MergeEngine.mergeFile(savedFile, config)` - single-file entry point added in Phase 1
-  - Refresh the VFS so IntelliJ picks up the updated patchedSrc content
-
 - **IDE Major Features**
 
   The goal is for patchedSrc to be the source of truth for all IDE queries, with originMap acting as an encoder/decoder.
@@ -80,8 +39,29 @@
   Both source sets must remain. The consequence is classes are indexed twice, and targeted suppression (like the existing highlight filters) is the only tool for deduplication per operation.
 
   Find Usages is the recommended first investment here - highest impact, cleanest extension point.
+  
+  For every case: The idea is to allow there to be two source sets at all times (for many many reasons this is the best way), but 
 
 ---
+
+### Engine + Annotations:
+Usually these things also have their own cascading implementations in Gradle and IDEA, but they are listed here as the origin entry.
+- Add a @ModifySignature annotation that allows you to modify the signature of a member.
+  - Takes in the target upstream (older) member. Same syntax as @DeleteMethodsAndFields.
+      - The upstream member reference must be added to also be the target of rename and move refactors.
+    - If no @OverwriteVersion is given, the original member body is still kept.
+      - It is up to the user to ensure method body remains error-free throughout member signature changes if no new body is given.
+    - This annotation would join @OverwriteVersion and @ShadowVersion as declarations that the method is making some modification.
+- Add support for inner classes.
+- Add support for records.
+- Add enum constants to refactoring support.
+  - Enum classes don't need to have any enum constants if the version they overwrite already does.
+    - To avoid something too complicated, this can be done via @ShadowVersion NONE Enum Constant being a placeholder for having no enum constants and not needing to reference them.
+    - Remember to add documentation for this.
+- Create and enforce @ModifyClass to make modifications explicit.
+  - the target is implicit via class name, although the annotation can optionally also take a string parameter to have a separate target name.
+    - This way the developer has some control over routing.
+    - 
 
 ### Gradle:
 
@@ -92,19 +72,6 @@
   - multiversion_resources.json path
 - Add an easy way to wire all versioned tasks to one main task. It should be possible to wire all :mc_version:fooTask into one :fooTask, and/or all :mc_version:module:fooTask into :fooTask
 - Add support for more types of mappings in architectury gradle.
-- Add a @ModifySignature annotation that allows you to modify the signature of a method/field.
-  - Takes in the target upstream (older) method. Same syntax as @DeleteMethodsAndFields.
-    - The upstream method reference must be added to also be the target of rename and move refactors.
-  - If no @OverwriteVersion is given, the original method body/field declaration is still kept.
-  - This annotation would join @OverwriteVersion and @ShadowVersion as the main 
-- Add enum constants to refactoring support. 
-- Add support for inner classes. 
-- Add support for records.
-- Enum classes don't need to have any enum constants if the version they overwrite already does.
-  - To avoid something too complicated, this can be done via @ShadowVersion NONE Enum Constant being a placeholder for having no enum constants and not needing to reference them.
-  - Remember to add documentation for this.
-- Create and enforce @ModifyClass to make modifications explicit. 
-  - the target is implicit via class name, although the annotation can optionally also take a string parameter to have a separate target name.
 - Add better caching control to make sure that gradle knows files haven't changed and only apply changes to patchedSrc.
 
 ---
@@ -131,8 +98,6 @@
     - Variation to just go up or down a version, and a variation to do that for the target of the annotation.
     - There is also a button next to the multiversion annotation that does the same thing as the.
   - A keybind that opens up a small menu showing you all the versions the class you're in or method/field you're targeting has. Lets you navigate between them and create net versions.
-- Once the common library merge engine is implemented, implement it into the IDE so that on file save patchedSrc is updated for all versions
-  - For this, use the single file path merge part of the engine, don't recalculate all patchedSrc.
 
 ---
 
