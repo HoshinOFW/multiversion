@@ -8,6 +8,7 @@
     <depends>org.jetbrains.kotlin</depends>
 
     <extensions defaultExtensionNs="com.intellij">
+        <notificationGroup id="Multiversion" displayType="BALLOON"/>
         <daemon.highlightInfoFilter implementation="com.github.hoshinofw.multiversion.idea_plugin.OverwriteDuplicateClassHighlightFilter"/>
         <daemon.highlightInfoFilter implementation="com.github.hoshinofw.multiversion.idea_plugin.ShadowVersionHighlightFilter"/>
         <gotoDeclarationHandler implementation="com.github.hoshinofw.multiversion.idea_plugin.PatchedSrcGotoDeclarationHandler"/>
@@ -26,6 +27,11 @@
         <renamePsiElementProcessor implementation="com.github.hoshinofw.multiversion.idea_plugin.MultiversionRenameProcessor"
                                    order="first"/>
     </extensions>
+
+    <applicationListeners>
+        <listener class="com.github.hoshinofw.multiversion.idea_plugin.MultiversionOnSaveListener"
+                  topic="com.intellij.openapi.fileEditor.FileDocumentManagerListener"/>
+    </applicationListeners>
 
     <projectListeners>
         <listener class="com.github.hoshinofw.multiversion.idea_plugin.PatchedSrcEditorRedirectListener"

@@ -1,5 +1,6 @@
 package com.github.hoshinofw.multiversion.util
 
+import com.github.hoshinofw.multiversion.MultiversionConfigurationExtension
 import com.github.hoshinofw.multiversion.MultiversionModulesExtension
 import org.gradle.api.Project
 import org.gradle.api.provider.Provider
@@ -64,49 +65,39 @@ class GeneralUtil {
 
     /**
      * Returns the loader type for a project: {@code "common"}, {@code "fabric"},
-     * {@code "forge"}, or {@code "neoforge"}.
-     *
-     * <p>When {@code multiversionModules} is configured, the type is looked up from that
-     * extension. Falls back to {@code p.name} for standard module names to preserve
-     * backward compatibility.
+     * {@code "forge"}, or {@code "neoforge"}. Returns {@code null} if not declared
+     * in {@code multiversionModules}.
      */
     static String loaderTypeOf(Project p) {
-        MultiversionModulesExtension mme = modulesExt(p)
-        if (mme?.isConfigured()) {
-            String type = mme.loaderTypeOf(p.name)
-            if (type != null) return type
-        }
-        return p.name
+        return modulesExt(p)?.loaderTypeOf(p.name)
+    }
+
+    /** Returns true if the project's loader type is {@code common}. */
+    static boolean isCommon(Project p) {
+        return modulesExt(p)?.loaderTypeOf(p.name) == 'common'
+    }
+
+    /** Returns true if the project's loader type is {@code fabric}. */
+    static boolean isFabric(Project p) {
+        return modulesExt(p)?.loaderTypeOf(p.name) == 'fabric'
+    }
+
+    /** Returns true if the project's loader type is {@code forge}. */
+    static boolean isForge(Project p) {
+        return modulesExt(p)?.loaderTypeOf(p.name) == 'forge'
+    }
+
+    /** Returns true if the project's loader type is {@code neoforge}. */
+    static boolean isNeoForge(Project p) {
+        return modulesExt(p)?.loaderTypeOf(p.name) == 'neoforge'
     }
 
     /**
-     * Returns true if the project is a common-type module.
-     *
-     * <p>Always true for {@code p.name == "common"} (backward compat). Additionally true
-     * for any module name listed under {@code multiversionModules { common = [...] }}.
+     * Returns true if the project is enrolled in any {@code architectury*} list in
+     * {@code multiversionModules}, meaning it receives full Loom/Arch auto-configuration.
      */
-    static boolean isCommon(Project p) {
-        MultiversionModulesExtension mme = modulesExt(p)
-        if (mme?.isConfigured()) return mme.loaderTypeOf(p.name) == 'common'
-        return p.name == 'common'
-    }
-
-    static boolean isFabric(Project p) {
-        MultiversionModulesExtension mme = modulesExt(p)
-        if (mme?.isConfigured()) return mme.loaderTypeOf(p.name) == 'fabric'
-        return p.name == 'fabric'
-    }
-
-    static boolean isForge(Project p) {
-        MultiversionModulesExtension mme = modulesExt(p)
-        if (mme?.isConfigured()) return mme.loaderTypeOf(p.name) == 'forge'
-        return p.name == 'forge'
-    }
-
-    static boolean isNeoForge(Project p) {
-        MultiversionModulesExtension mme = modulesExt(p)
-        if (mme?.isConfigured()) return mme.loaderTypeOf(p.name) == 'neoforge'
-        return p.name == 'neoforge'
+    static boolean isArchEnabled(Project p) {
+        return modulesExt(p)?.isArchEnabled(p.name) ?: false
     }
 
     /**
@@ -115,8 +106,7 @@ class GeneralUtil {
      * is not a recognized versioned module.
      */
     static String moduleType(Project p) {
-        MultiversionModulesExtension mme = modulesExt(p)
-        String type = mme?.isConfigured() ? mme.loaderTypeOf(p.name) : p.name
+        String type = modulesExt(p)?.loaderTypeOf(p.name)
         return type in ['common', 'fabric', 'forge', 'neoforge'] ? type : null
     }
 
@@ -135,26 +125,33 @@ class GeneralUtil {
         }
     }
 
-    static final List<String> minimumRequiredProperties = [
+    /**
+     * Properties always required for every versioned module.
+     * Used by {@link com.github.hoshinofw.multiversion.resourceExtension.MultiversionResourcesExtension}
+     * to populate default resource substitution values.
+     */
+    static final List<String> minimumBaseProperties = [
             "mod_id",
             "mod_name",
             "mod_version",
             "archives_name",
             "maven_group",
             "minecraft_version",
-            "enabled_platforms",
-            "fabric_loader_version",
-            "architectury_api_version"
     ]
 
-    static void ensureMinimumRequiredProperties(Project p){
-        List<String> fullList = new ArrayList<>(minimumRequiredProperties)
-        if (isFabric(p)) {fullList.add("fabric_api_version")}
-        if (isForge(p)) {fullList.add("forge_version")}
-        if (isNeoForge(p)) {fullList.add("neoforge_version")}
+    static void ensureMinimumRequiredProperties(Project p) {
+        List<String> fullList = new ArrayList<>(minimumBaseProperties)
+        if (isArchEnabled(p)) {
+            fullList.add("enabled_platforms")
+            // fabric_loader_version is only used by common and fabric modules
+            if (isCommon(p) || isFabric(p)) fullList.add("fabric_loader_version")
+            if (isFabric(p))   fullList.add("fabric_api_version")
+            if (isForge(p))    fullList.add("forge_version")
+            if (isNeoForge(p)) fullList.add("neoforge_version")
+        }
         try {
             ensureProperties(p, fullList)
-        } catch (Exception e){
+        } catch (Exception e) {
             throw new Exception("Missing minimum requirements to function:$e")
         }
     }
@@ -174,15 +171,12 @@ class GeneralUtil {
     }
 
     /**
-     * Returns true if the project should receive full Architectury/Loom subproject configuration.
-     *
-     * <p>Always true for the four standard module names (backward compat). Additionally true
-     * for any module name declared in {@code multiversionModules}.
+     * Returns true if the project is a declared versioned module (appears in any plain or
+     * architectury list in {@code multiversionModules}) and should receive subproject configuration.
      */
     static boolean isNotBaseVersionModule(Project p) {
         MultiversionModulesExtension mme = modulesExt(p)
-        if (mme?.isConfigured()) return mme.allModules().contains(p.name)
-        return p.name in ['common', 'fabric', 'forge', 'neoforge']
+        return mme != null && mme.allModules().contains(p.name)
     }
 
     static String mcVersion(Project p) {
@@ -221,7 +215,11 @@ class GeneralUtil {
 
     // ---- private helpers ----
 
-    private static MultiversionModulesExtension modulesExt(Project p) {
+    static MultiversionModulesExtension modulesExt(Project p) {
         p.rootProject.extensions.findByType(MultiversionModulesExtension)
+    }
+
+    static MultiversionConfigurationExtension configExt(Project p) {
+        p.rootProject.extensions.findByType(MultiversionConfigurationExtension)
     }
 }

@@ -1,1 +1,3 @@
 rootProject.name = "idea-plugin"
+
+includeBuild("../merge-engine")

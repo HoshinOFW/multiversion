@@ -7,10 +7,12 @@ plugins {
 }
 
 group = "com.github.hoshinofw.multiversion"
-version = "0.4.7"
+version = "0.5.0"
 
 repositories {
     mavenCentral()
+    mavenLocal()
+    maven { url = uri("https://maven.hoshinofw.net/releases") }
     intellijPlatform { defaultRepositories() }
 }
 
@@ -19,6 +21,8 @@ val mod_template_libs_dir = File(mainDir, "mod-template/libs/m2")
 
 
 dependencies {
+    implementation("com.github.hoshinofw.multiversion:multiversion-merge-engine:0.1.0")
+
     intellijPlatform {
         intellijIdeaCommunity("2024.3.1")
         bundledPlugin("com.intellij.java")

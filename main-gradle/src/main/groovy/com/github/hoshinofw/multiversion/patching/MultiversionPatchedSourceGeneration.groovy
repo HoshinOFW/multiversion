@@ -1,6 +1,7 @@
 package com.github.hoshinofw.multiversion.patching
 
 import com.github.hoshinofw.multiversion.MultiversionModulesExtension
+import com.github.hoshinofw.multiversion.engine.MergeEngine
 import com.github.hoshinofw.multiversion.util.GeneralUtil
 import com.github.hoshinofw.multiversion.util.PatchingUtil
 import org.gradle.api.Project
@@ -236,7 +237,7 @@ class MultiversionPatchedSourceGeneration {
 
                 t.doLast {
                     try {
-                        MethodMergeEngine.processVersion(mergeCurrentSrcDir, mergeBaseDir, outJavaDir.get().asFile, mergeCurrentRelRoot, mergeBaseRelRoot, mapOut)
+                        MergeEngine.versionUpdatePatchedSrc(mergeCurrentSrcDir, mergeBaseDir, outJavaDir.get().asFile, mergeCurrentRelRoot, mergeBaseRelRoot, mapOut)
                     } catch (Exception e) {
                         if (project.gradle.taskGraph.allTasks.any { it.name == "generateAllPatchedSrc" }) {
                             logger.warn("[patch-${moduleName}] patchedSrc merge failed for ${patchP.path} (sync will continue): ${e.message}")
@@ -317,8 +318,29 @@ class MultiversionPatchedSourceGeneration {
                 }
             }
 
+            TaskProvider<Task> genConfig = patchP.tasks.register("generateMultiversionEngineConfig") { Task t ->
+                t.group = "build setup"
+                t.description = "Writes build/multiversion-engine-config.json for IDE on-save integration."
+                t.doLast {
+                    def configFile = patchP.layout.buildDirectory.file("multiversion-engine-config.json").get().asFile
+                    configFile.parentFile.mkdirs()
+                    def config = [
+                        module           : moduleName,
+                        mcVersion        : patchVer,
+                        currentSrcDir    : mergeCurrentSrcDir.absolutePath,
+                        baseDir          : mergeBaseDir.absolutePath,
+                        patchedOutDir    : outJavaDir.get().asFile.absolutePath,
+                        currentSrcRelRoot: mergeCurrentRelRoot,
+                        baseRelRoot      : mergeBaseRelRoot,
+                        originMapFile    : mapFile.absolutePath
+                    ]
+                    configFile.text = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(config))
+                }
+            }
+
             patchedGenTasks << genJava
             patchedGenTasks << genRes
+            patchedGenTasks << genConfig
 
             // Replace source set with patchedSrc output
             patchP.plugins.withId("java") {

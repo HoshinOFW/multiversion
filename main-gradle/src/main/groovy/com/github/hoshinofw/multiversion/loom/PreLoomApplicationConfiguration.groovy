@@ -6,7 +6,7 @@ import org.gradle.api.Project
 class PreLoomApplicationConfiguration {
 
     static void configure(Project p) {
-        if (!GeneralUtil.isCommon(p) && GeneralUtil.isNotBaseVersionModule(p)) {
+        if (!GeneralUtil.isCommon(p) && GeneralUtil.isArchEnabled(p)) {
             p.extensions.extraProperties.set("loom.platform", GeneralUtil.getModLoader(p))
             p.pluginManager.apply("dev.architectury.loom")
         }

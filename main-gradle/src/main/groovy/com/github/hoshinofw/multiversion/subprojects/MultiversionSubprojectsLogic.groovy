@@ -36,19 +36,20 @@ class MultiversionSubprojectsLogic {
             PreLoomApplicationConfiguration.configure(p)
 
             p.pluginManager.apply("idea")
-            p.pluginManager.apply("dev.architectury.loom")
-            p.pluginManager.apply("architectury-plugin")
             p.pluginManager.apply("maven-publish")
             p.pluginManager.apply("java-library")
 
-            if (!GeneralUtil.isCommon(p)) {
-                p.pluginManager.apply("com.gradleup.shadow")
-            }
+            if (GeneralUtil.isArchEnabled(p)) {
+                p.pluginManager.apply("dev.architectury.loom")
+                p.pluginManager.apply("architectury-plugin")
 
-            String commonPath = ":${minecraft_version}:common"
+                if (!GeneralUtil.isCommon(p)) {
+                    p.pluginManager.apply("com.gradleup.shadow")
+                }
 
-            p.extensions.configure("architectury") { Object ext ->
-                GeneralUtil.configureArchitecturyPlatform(p, ext)
+                p.extensions.configure("architectury") { Object ext ->
+                    GeneralUtil.configureArchitecturyPlatform(p, ext)
+                }
             }
 
             p.base {
@@ -69,7 +70,7 @@ class MultiversionSubprojectsLogic {
 
             SubprojectsMisc.configure(p, root, count)
 
-            SubprojectDependencies.configure(p, commonPath)
+            SubprojectDependencies.configure(p, commonPath(minecraft_version))
 
             MultiversionResourcesExtension.configure(p, root, mrt)
 
@@ -81,4 +82,7 @@ class MultiversionSubprojectsLogic {
         }
     }
 
+    private static String commonPath(String minecraft_version) {
+        ":${minecraft_version}:common"
+    }
 }

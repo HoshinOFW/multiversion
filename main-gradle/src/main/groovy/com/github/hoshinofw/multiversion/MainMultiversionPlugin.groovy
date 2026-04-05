@@ -9,7 +9,6 @@ import com.github.hoshinofw.multiversion.resourceExtension.MultiversionResources
 import com.github.hoshinofw.multiversion.subprojects.MultiversionSubprojectsLogic
 import com.github.hoshinofw.multiversion.tasks.TaskRegistration
 import com.github.hoshinofw.multiversion.util.GeneralUtil
-import dev.architectury.plugin.ArchitectPluginExtension
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.Task
@@ -23,6 +22,7 @@ class MainMultiversionPlugin implements Plugin<Project> {
 
         MultiversionResourcesExtension multiversionResourcesExtension = target.extensions.create("multiversionResources", MultiversionResourcesExtension)
         MultiversionModulesExtension multiversionModulesExtension = target.extensions.create("multiversionModules", MultiversionModulesExtension)
+        target.extensions.create("multiversionConfiguration", MultiversionConfigurationExtension)
 
         // Register on every project so multiversion.isFabric() etc. resolve correctly
         // both inside subprojects{} blocks and in individual subproject build.gradle files.
@@ -30,8 +30,7 @@ class MainMultiversionPlugin implements Plugin<Project> {
             p.extensions.create("multiversion", MultiversionProjectExtension, p)
         }
 
-        // Always register the anchor task so the beforeSync IDE trigger never breaks sync,
-        // even if the plugin is later removed or patchModules is emptied.
+
         TaskProvider<Task> genAll = target.tasks.register("generateAllPatchedSrc") {
             it.group = "build setup"
             it.description = "Generates all patchedSrc trees for IDE sync/import."
@@ -45,13 +44,15 @@ class MainMultiversionPlugin implements Plugin<Project> {
             }
         }
 
-        DefaultProperties.assignIfNeeded(target)
-        ApplyExternalPlugins.configure(target)
-        MultiversionSubprojectsLogic.configureSubprojects(target, multiversionResourcesExtension)
-        MultiversionPatchedSourceGeneration.configure(target, multiversionModulesExtension)
-        Collectors.registerCollectorTasks(target)
-        DistributorPublishingConfiguration.configure(target)
-
-        TaskRegistration.registerAll(target)
+        target.afterEvaluate {
+            multiversionModulesExtension.validate()
+            DefaultProperties.assignIfNeeded(target)
+            ApplyExternalPlugins.configure(target)
+            MultiversionSubprojectsLogic.configureSubprojects(target, multiversionResourcesExtension)
+            MultiversionPatchedSourceGeneration.configure(target, multiversionModulesExtension)
+            Collectors.registerCollectorTasks(target)
+            DistributorPublishingConfiguration.configure(target)
+            TaskRegistration.registerAll(target)
+        }
     }
 }

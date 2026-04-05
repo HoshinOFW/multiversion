@@ -1,3 +1,9 @@
+<h2>0.5.0</h2>
+<ul>
+  <li><strong>On-save patchedSrc update</strong> Saving a versioned source file now automatically re-merges it into <code>patchedSrc</code>, keeping the IDE's view of the merged class in sync without a full Gradle sync.</li>
+  <li><strong>Engine config bridge</strong> The Gradle plugin now writes <code>build/multiversion-engine-config.json</code> per version module during <code>generateAllPatchedSrc</code>.</li>
+</ul>
+
 <h2>0.4.7</h2>
 <ul>
   <li><strong>BUG FIX</strong> Ctrl+Click on <code>init</code> and <code>init(params)</code> descriptor strings inside <code>@DeleteMethodsAndFields</code> now navigates to the correct constructor declaration.</li>

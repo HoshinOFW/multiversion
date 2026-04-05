@@ -61,29 +61,30 @@ multiversionResources {
 
 The plugin registers a `multiversion` extension on every project, exposing utility methods for cleanly routing configuration by platform and Minecraft version. No import is needed.
 
-`subprojects {}` iterates every subproject including version-group projects (`:1.20.1`, `:1.21.1`) which do not have Loom applied. Always guard Loom-specific configurations such as `modImplementation` with `multiversion.isVersionedModule()`:
+`subprojects {}` iterates every subproject including version-group projects (`:1.20.1`, `:1.21.1`) which are not versioned modules at all. Guard with `multiversion.isVersionedModule()` to skip those. If your project has plain modules (not enrolled in an `architectury*` list), they do not have Loom applied either — guard Loom-specific configurations such as `modImplementation` with `multiversion.isArchEnabled()` instead:
 
 ```groovy
 subprojects {
     if (!multiversion.isVersionedModule()) return
 
     dependencies {
-        // loader-based routing
-        if (multiversion.isCommon()) {
-            // common module deps
-        }
-        if (multiversion.isFabric()) {
-            // Fabric API is handled automatically; add other Fabric-specific deps here
-            modImplementation "..."
-        }
-        if (multiversion.isForge()) {
-            // Forge-specific deps
-        }
-        if (multiversion.isNeoForge()) {
-            // NeoForge-specific deps
+        // Loom-specific configurations require isArchEnabled()
+        if (multiversion.isArchEnabled()) {
+            if (multiversion.isCommon()) {
+                // common module deps
+            }
+            if (multiversion.isFabric()) {
+                modImplementation "..."
+            }
+            if (multiversion.isForge()) {
+                // Forge-specific deps
+            }
+            if (multiversion.isNeoForge()) {
+                // NeoForge-specific deps
+            }
         }
 
-        // version-based routing
+        // version-based routing works for all modules
         if (multiversion.isMcVersion("1.20.1")) {
             // 1.20.1-only deps
         }
@@ -114,46 +115,73 @@ subprojects {
 }
 ```
 
-When `multiversionModules` is configured, `isFabric()`, `isForge()`, etc. resolve based on the declared loader type for that module name — not the directory name. A module named `fabric-custom` declared under `fabric = ['fabric-custom']` returns `true` from `isFabric()`.
+`isFabric()`, `isForge()`, etc. resolve based on the declared loader type for that module name — not the directory name. A module named `fabric-custom` declared under `architecturyFabric = ['fabric-custom']` (or `fabric = ['fabric-custom']`) returns `true` from `isFabric()`.
 
 ---
 
 ### Module configuration and patching
 
-The `multiversionModules` closure declares which module names exist in the project, what loader type each belongs to, and which should have patchedSrc generation applied across versions.
+The `multiversionModules` closure declares which module names exist in the project, what loader type each belongs to, which should receive Architectury/Loom auto-configuration, and which should have patchedSrc generation applied across versions.
+
+`multiversionModules` is **required** — without it the plugin does not configure any subprojects.
+
+#### Plain loader-type lists
+
+`common`, `fabric`, `forge`, and `neoforge` declare module names for routing purposes only. They determine what `isFabric()`, `moduleType()`, etc. return, and which modules receive `multiversionResources` processing and patchedSrc generation. No Loom or Architectury configuration is applied to these modules — dependency and build setup is left entirely to you.
 
 ```groovy
 multiversionModules {
-    common   = ['common', 'api']
+    common   = ['common', 'api']  // 'api' is plain: no Loom, you manage its build
     fabric   = ['fabric']
-    forge    = ['forge']
     neoforge = ['neoforge']
-    patchModules = ['common', 'fabric', 'forge', 'neoforge']
+    patchModules = ['common', 'api', 'fabric', 'neoforge']
 }
 ```
 
-This closure is **optional** but **required for patching to occur**. Without it, all standard modules (common, fabric, forge, neoforge) still receive their Architectury and Loom configuration based on their directory name, but no patchedSrc generation takes place.
+#### Architectury/Loom opt-in lists
 
-#### Loader type groups
-
-Each key (`common`, `fabric`, `forge`, `neoforge`) declares a list of module names that receive the corresponding Architectury/Loom configuration:
+`architecturyCommon`, `architecturyFabric`, `architecturyForge`, and `architecturyNeoforge` opt modules into full Loom + Architectury auto-configuration:
 
 | Key | Configuration applied |
 |---|---|
-| `common` | Fabric loader with Architectury annotation transforms, no platform Loom |
-| `fabric` | Fabric Loom |
-| `forge` | Forge Loom |
-| `neoforge` | NeoForge Loom |
+| `architecturyCommon` | Fabric loader, Architectury annotation transforms, no platform Loom. Shadow-bundled into platform modules. |
+| `architecturyFabric` | Fabric Loom, fabric-loader, Fabric API |
+| `architecturyForge` | Forge Loom |
+| `architecturyNeoforge` | NeoForge Loom |
 
-Non-standard module names (like `api` in the example above) must be assigned to a group to receive any Architectury setup. Standard names (`common`, `fabric`, `forge`, `neoforge`) always receive their default setup even if omitted from the closure.
+Listing a module in an `architectury*` list **implicitly declares it in the matching plain list** as well. There is no need to list it twice.
+
+```groovy
+multiversionModules {
+    // All three modules use Loom — plain lists are implied:
+    architecturyCommon   = ['common']
+    architecturyFabric   = ['fabric']
+    architecturyNeoforge = ['neoforge']
+    patchModules = ['common', 'fabric', 'neoforge']
+}
+```
+
+Only `architecturyCommon` modules are shadow-bundled into platform modules. A plain `common` module is treated as an external dependency.
 
 #### `patchModules`
 
-Lists the module names that get patchedSrc generation. Each name in this list must have corresponding directories under at least one version folder (e.g. `1.21.1/fabric/`). The plugin patches each module group independently: `fabric` versions are layered against each other, `forge` versions against each other, and so on.
-
-Modules not in `patchModules` (such as `api` in the example) still receive full Minecraft/Architectury configuration but are not patched across versions.
+Lists the module names that get patchedSrc generation. Fully independent of the loader-type and architectury lists — any declared module can be patched. Each name must have corresponding directories under at least one version folder (e.g. `1.21.1/fabric/`). The plugin patches each module group independently: `fabric` versions are layered against each other, `forge` versions against each other, and so on.
 
 If a module is declared in `patchModules` but is missing from a particular version folder, a warning is logged and that version is skipped for the module. No error is thrown.
+
+#### `multiversionConfiguration`
+
+A separate root-level closure for project-wide plugin behaviour settings.
+
+```groovy
+multiversionConfiguration {
+    automaticArchApi = false  // default
+}
+```
+
+| Property | Default | Description |
+|---|---|---|
+| `automaticArchApi` | `false` | When `true`, the plugin reads `architectury_api_version` from `gradle.properties` and adds the Architectury API dependency automatically to every module enrolled in an `architectury*` list. When `false`, the property is ignored and the dependency is your responsibility. |
 
 #### Root-level shared source
 
@@ -319,13 +347,18 @@ This creates the following structure:
 └── gradle.properties
 ```
 
-The generated `gradle.properties` is pre-filled with `minecraft_version` and `enabled_platforms`. You still need to add the loader-specific version properties before the project will build:
+The generated `gradle.properties` is pre-filled with `minecraft_version` and `enabled_platforms`. You still need to add the loader-specific version properties before the project will build.
+
+Properties required for modules enrolled in an `architectury*` list:
 
 | Property | Required for |
 |---|---|
-| `fabric_api_version` | Fabric |
-| `forge_version` | Forge |
-| `neoforge_version` | NeoForge |
+| `enabled_platforms` | All Architectury-enrolled modules (comma-separated list of loaders, e.g. `fabric,neoforge`) |
+| `fabric_loader_version` | `architecturyCommon` and `architecturyFabric` modules |
+| `fabric_api_version` | `architecturyFabric` modules |
+| `forge_version` | `architecturyForge` modules |
+| `neoforge_version` | `architecturyNeoforge` modules |
+| `architectury_api_version` | Only when `multiversionConfiguration { automaticArchApi = true }` |
 
 Properties shared across all versions (`mod_id`, `mod_name`, `mod_version`, `archives_name`, `maven_group`) belong in the root `gradle.properties` and are inherited automatically.
 

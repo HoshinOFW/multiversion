@@ -16,7 +16,7 @@ class SubprojectsMisc {
             }
         }
 
-        if (!GeneralUtil.isCommon(p)) {
+        if (GeneralUtil.isArchEnabled(p) && !GeneralUtil.isCommon(p)) {
             p.configurations {
                 common {
                     canBeResolved = true
@@ -41,7 +41,7 @@ class SubprojectsMisc {
             p.remapJar {
                 inputFile.set p.shadowJar.archiveFile
             }
-        } else if (GeneralUtil.isNotBaseVersionModule(p)) {
+        } else if (GeneralUtil.isCommon(p) && GeneralUtil.isNotBaseVersionModule(p)) {
             // Each common-type module may have a root-level shared source directory named
             // after the module itself (e.g. common/src/main/java, api/src/main/java).
             // Only added if the directory actually exists (always optional).

@@ -3,54 +3,80 @@ package com.github.hoshinofw.multiversion
 /**
  * DSL extension registered as {@code multiversionModules { }} in the root build.gradle.
  *
- * <p>Declares which module names exist, what loader type each belongs to, and which should
- * have patchedSrc generation applied across versions.
+ * <p>Each module name must appear in exactly one plain loader-type list. Plain lists drive
+ * all routing utilities ({@code isFabric()}, {@code moduleType()}, etc.) and determine
+ * which modules receive {@code multiversionResources} processing and patchedSrc generation.
  *
- * <p>Example:
+ * <p>To additionally opt a module into full Architectury/Loom auto-configuration
+ * (minecraft dependency, mappings, loader deps, remapJar, shadow-bundling), add the
+ * module name to the corresponding {@code architectury*} list. Listing a module in an
+ * {@code architectury*} list implicitly adds it to the matching plain list, so there is
+ * no need to declare it twice.
+ *
+ * <p>Example — all modules use Architectury/Loom:
  * <pre>
  * multiversionModules {
- *     common   = ['common', 'api']
- *     fabric   = ['fabric']
- *     forge    = ['forge']
- *     neoforge = ['neoforge']
- *     patchModules = ['common', 'fabric', 'forge', 'neoforge']
+ *     architecturyCommon   = ['common']
+ *     architecturyFabric   = ['fabric']
+ *     architecturyNeoforge = ['neoforge']
+ *     patchModules = ['common', 'fabric', 'neoforge']
  * }
  * </pre>
  *
- * <p>Modules listed under {@code common/fabric/forge/neoforge} receive the corresponding
- * Architectury/Loom configuration. Modules listed in {@code patchModules} additionally
- * receive patchedSrc generation across versions. Patching is disabled when
- * {@code patchModules} is empty.
- *
- * <p>Standard module names (common, fabric, forge, neoforge) always receive their
- * default configuration regardless of whether they appear in this extension, preserving
- * backward compatibility.
+ * <p>Example — mixed: one plain module, others use Loom:
+ * <pre>
+ * multiversionModules {
+ *     common   = ['api']          // plain — no Loom, user manages build setup
+ *     architecturyCommon   = ['common']
+ *     architecturyFabric   = ['fabric']
+ *     architecturyNeoforge = ['neoforge']
+ *     patchModules = ['api', 'common', 'fabric', 'neoforge']
+ * }
+ * </pre>
  */
 class MultiversionModulesExtension {
 
-    /** Module names that receive common-type configuration (Fabric loader, Architectury annotations, no platform Loom). */
+    // ---- Plain loader-type lists (routing only) ----
+
+    /** Module names whose loader type is {@code common}. */
     List<String> common = []
 
-    /** Module names that receive Fabric Loom configuration. */
+    /** Module names whose loader type is {@code fabric}. */
     List<String> fabric = []
 
-    /** Module names that receive Forge Loom configuration. */
+    /** Module names whose loader type is {@code forge}. */
     List<String> forge = []
 
-    /** Module names that receive NeoForge Loom configuration. */
+    /** Module names whose loader type is {@code neoforge}. */
     List<String> neoforge = []
+
+    // ---- Architectury/Loom opt-in lists ----
+
+    /**
+     * Subset of {@code common} modules that receive full Architectury/Loom auto-configuration.
+     * These modules are shadow-bundled into platform modules.
+     */
+    List<String> architecturyCommon = []
+
+    /** Subset of {@code fabric} modules that receive full Architectury/Loom auto-configuration. */
+    List<String> architecturyFabric = []
+
+    /** Subset of {@code forge} modules that receive full Architectury/Loom auto-configuration. */
+    List<String> architecturyForge = []
+
+    /** Subset of {@code neoforge} modules that receive full Architectury/Loom auto-configuration. */
+    List<String> architecturyNeoforge = []
+
+    // ---- Patching ----
 
     /**
      * Module names that get patchedSrc generation across versions.
-     * Must be a subset of names declared in the loader-type lists above.
+     * Fully independent of the loader-type and architectury lists.
      * Patching is disabled when this list is empty.
      */
     List<String> patchModules = []
 
-    /** Returns true if any loader-type group has been configured. */
-    boolean isConfigured() {
-        !common.isEmpty() || !fabric.isEmpty() || !forge.isEmpty() || !neoforge.isEmpty()
-    }
+    // ---- Queries ----
 
     /**
      * Returns the loader type string for {@code moduleName}, or {@code null} if unknown.
@@ -64,13 +90,35 @@ class MultiversionModulesExtension {
         return null
     }
 
-    /** Returns all module names declared across all loader-type groups. */
+    /** Returns true if {@code moduleName} is enrolled in any {@code architectury*} list. */
+    boolean isArchEnabled(String moduleName) {
+        architecturyCommon.contains(moduleName)   ||
+        architecturyFabric.contains(moduleName)   ||
+        architecturyForge.contains(moduleName)    ||
+        architecturyNeoforge.contains(moduleName)
+    }
+
+    /** Returns all module names declared across all plain loader-type lists (deduplicated). */
     List<String> allModules() {
-        def all = [] as List<String>
-        all.addAll(common)
-        all.addAll(fabric)
-        all.addAll(forge)
-        all.addAll(neoforge)
-        return all
+        (common + fabric + forge + neoforge).unique()
+    }
+
+    /** Returns all module names declared across all {@code architectury*} lists (deduplicated). */
+    List<String> allArchitecturyModules() {
+        (architecturyCommon + architecturyFabric + architecturyForge + architecturyNeoforge).unique()
+    }
+
+    /**
+     * Merges each {@code architectury*} list into its corresponding plain list so that
+     * enrolling a module in e.g. {@code architecturyFabric} implicitly declares it as a
+     * {@code fabric}-type module without requiring the user to list it twice.
+     *
+     * <p>Called automatically in {@code afterEvaluate} by the plugin.
+     */
+    void validate() {
+        architecturyCommon.each   { if (!common.contains(it))   common.add(it) }
+        architecturyFabric.each   { if (!fabric.contains(it))   fabric.add(it) }
+        architecturyForge.each    { if (!forge.contains(it))    forge.add(it) }
+        architecturyNeoforge.each { if (!neoforge.contains(it)) neoforge.add(it) }
     }
 }

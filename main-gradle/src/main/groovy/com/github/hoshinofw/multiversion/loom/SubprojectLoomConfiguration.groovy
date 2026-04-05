@@ -6,8 +6,9 @@ import org.gradle.api.Project
 class SubprojectLoomConfiguration {
 
     static void configure(Project p) {
+        if (!GeneralUtil.isArchEnabled(p)) return
 
-        if (!GeneralUtil.isCommon(p) && GeneralUtil.isNotBaseVersionModule(p)) {
+        if (!GeneralUtil.isCommon(p)) {
             // set before applying loom
             p.extensions.extraProperties.set("loom.platform", GeneralUtil.loaderTypeOf(p))
             p.pluginManager.apply("dev.architectury.loom")

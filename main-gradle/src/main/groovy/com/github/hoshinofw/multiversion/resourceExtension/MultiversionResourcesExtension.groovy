@@ -14,7 +14,7 @@ class MultiversionResourcesExtension {
 
     static Map<String, String> generateDefaultReplaceProperties(@NotNull Project root) {
         Map<String, String> out =  new HashMap<>()
-        GeneralUtil.minimumRequiredProperties.forEach {
+        GeneralUtil.minimumBaseProperties.forEach {
             out.put(it, root.findProperty(it).toString())
         }
         return out

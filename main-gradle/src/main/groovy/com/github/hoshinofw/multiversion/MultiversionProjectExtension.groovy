@@ -35,8 +35,12 @@ class MultiversionProjectExtension {
         this.project = project
     }
 
-    /** Returns true if this project is a versioned module with Loom applied (common, fabric, forge, or neoforge type). */
+    /** Returns the module name (the project's directory name, e.g. {@code "fabric"}, {@code "fabric-custom"}). */
+    String  module()               { project.name }
+    /** Returns true if this project is a declared versioned module (appears in any list in {@code multiversionModules}). */
     boolean isVersionedModule()   { GeneralUtil.isNotBaseVersionModule(project) }
+    /** Returns true if this project is enrolled in an {@code architectury*} list and receives full Loom/Arch auto-configuration. */
+    boolean isArchEnabled()        { GeneralUtil.isArchEnabled(project) }
     boolean isCommon()            { GeneralUtil.isCommon(project) }
     boolean isFabric()            { GeneralUtil.isFabric(project) }
     boolean isForge()             { GeneralUtil.isForge(project) }

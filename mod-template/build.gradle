@@ -2,6 +2,10 @@ plugins {
      id "com.github.hoshinofw.multiversion.multiversion" //Add version
 }
 
+multiversionConfiguration {
+    automaticArchApi = true
+}
+
 multiversionResources {
     replaceProperties = [
             "mod_license" : mod_license.toString(),
@@ -11,10 +15,10 @@ multiversionResources {
 }
 
 multiversionModules {
-    common = ['common']
-    fabric = ['fabric']
-    forge = ['forge']
-    neoforge = ['neoforge']
+    architecturyCommon = ['common']
+    architecturyFabric = ['fabric']
+    architecturyForge = ['forge']
+    architecturyNeoforge = ['neoforge']
 
     patchModules = ['forge', 'fabric', 'neoforge', 'common']
 }
