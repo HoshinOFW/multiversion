@@ -18,6 +18,8 @@ AI DISCLAIMER: Parts of this project were written/assisted by AI. Especially the
 ### Applying the plugins
 
 Add the repository and apply the settings plugin in `settings.gradle`. The settings plugin automatically registers the rest of the required repositories (Fabric, Architectury, Forge, NeoForge) so you don't need to list them manually.
+You can check the changelog files in each project to see if its worth migrating to a higher version.
+This project in its current state is feature-complete enough to be useful, and will be backwards-compatible for the near future. Any changes will be minimal.
 
 ```groovy
 pluginManagement {
@@ -28,7 +30,7 @@ pluginManagement {
 }
 
 plugins {
-    id "com.github.hoshinofw.multiversion.multiversion-settings" version "0.2.0"
+    id "com.github.hoshinofw.multiversion.multiversion-settings" version "0.5.0"
 }
 ```
 
@@ -36,7 +38,7 @@ Then apply the main plugin in the root `build.gradle`. The annotations `compileO
 
 ```groovy
 plugins {
-    id "com.github.hoshinofw.multiversion.multiversion" version "0.2.0"
+    id "com.github.hoshinofw.multiversion.multiversion" version "0.5.4"
 }
 
 repositories {
