@@ -82,13 +82,8 @@ Treat the engine as a true common library, not just something that owns merge lo
 - Redirect all errors from patchedSrc to their code origins. In the problems page, but also when exploring the original code.
   - Related error warning should propagate between versions as well. If Foo in 1.21.1 is broken, a related error message should show up in Foo 1.20.1 .
 - Navigation stuff through extra buttons next to shadowed or overwritten fields/methods/target classes? Kinda like how mixin adds a button to go to the original class/method/field
-- Correct the usages search for classes/fields/methods. At the moment it still shows patchedSrc as usages. 
-  - In reality, it should: Search only patchedSrc, but use originMap to find the original declaration and show only those. 
-  - This is correct because you search patchedSrc which is the source of truth, but parse to real code declaration for development environment.
-  - The key idea is to keep patchedSrc as truth, but always point to original code in dev environment.
-  - Compilation should always just work with patchedSrc.
-- Expand the previous point to other applications. patchedSrc is truth for all indexing and searching, originMap provides the DX/UX experience by showing the developer the class that contributed.
-  - The key idea is that all searching it doing through patchedSrc, then routed back to its real reference.
+- Examine more ways the IDE currently routes through both trueSrc and patchedSrc, while it should only do patchedSrc then remap
+  - Essentially replicate what was already done for findUsages but for other IDE features.
 - Add IDE navigation: 
   - A button on every annotation that takes you to the version it is overwriting or shadowing.
   - A keybind to go up or down a version. Literally Ctrl+Shift+w or s or up or down.
@@ -105,110 +100,58 @@ Treat the engine as a true common library, not just something that owns merge lo
 ---
 
 ### Ambitious:
-- Add a way to view and play with patchedSrc directly, and the changes propagate to the correct version.
-  - Make the one-way flow two-way.
-  - Proposal: I can open the 1.20.1 version of a class in a special mode where I basically just open patchedSrc.
-    - Any changes I make are reverse-engineered to the main java src for the version. 
-      - For example, changing a method adds it with @OverwriteVersion to the code for the version.
-  - The reason this could be very useful is because you can essentially interact with the complete version level of the class.
-    - The version source code remains slim, but you can see the whole version classes at once.
-  - This is still just an extension of current behavior.
-  - Some things are missing before this:
-    - Reimplement comments in patchedSrc.
-    - Implement javadocs in patchedSrc.
-  
-I am essentially envisioning a reversal of the current process. By keeping both sources, it can be up to the developer how they choose to code.
-The IDE is currently supporting one. All thats needed is to add the functionality to the merge engine, isolate the engine, then implement everything in the IDE.
-I don't believe users should directly access patchedSrc. A new type of file editing wrapper would need to be created.
-Where you edit a virtual file where the edits are parsed into the to-be-patched modules, then patched into patchedSrc.
-That is essentially the role of the reverse engine, to look at an edited file, compare it to the version above and below it, then spit out a slim changes-only file.
+Make the one-way flow two-way. The current system where the primary interaction is the patch classes is elegant, but you can't see the whole behavior of a class at once. The goal is a dual system where the developer can open a "version view" showing the fully merged class and edit it directly, with changes reverse-engineered back into slim version source.
 
-  **Feasibility: Medium-High.** The forward engine already solves the hard structural problem. The reverse direction is a well-defined inversion of it, with the main complexity sitting in the virtual document infrastructure and the write-back attribution logic.
+**Flow:**
+virtual version src -reverse engine-> true version src -forward engine-> patchedSrc -refresh-> virtual version src
 
-  **Prerequisites:**
-  - Comments and Javadoc preserved through the forward merge, otherwise edits made in the version view are silently lossy on the first round-trip.
-  - Single-file merge entry point (Phase 1 of MergeEngine plan)  needed to efficiently regenerate patchedSrc after a write-back.
+This is a well-defined event loop with no cycle risk. Virtual version src and patchedSrc at a given version are the same content, the difference is interaction intent. Editing true version src directly still works and round-trips back via file-watch.
 
-  **Components:**
+**Prerequisite:** Comments and Javadoc preserved through the forward merge, otherwise edits in the version view are silently lossy on the first round-trip.
 
-  *Reverse engine (merge-engine module):*
-  Takes two ASTs  the edited merged state and the "base" merged state produced by the version below  and outputs the minimal set of version-layer declarations needed to reproduce the edited state from the base. This is a structural diff on JavaParser ASTs. Each diff item maps to exactly one annotation + declaration:
-  - Method/field present in edit but not in base → add to version source (new member)
-  - Method/field present in both but bodies differ → add to version source with `@OverwriteVersion`
-  - Method/field present in base but absent from edit → add `@DeleteMethodsAndFields` entry
-  - Inheritance clause differs → add class declaration with `@OverwriteInheritance`
-  - Method/field unchanged from base → emit nothing (inherited, no version source needed)
+**Components:**
 
-  *Version view document (IDE plugin):*
-  A `LightVirtualFile` backed virtual document opened by a dedicated action ("Open Version View"). It displays the fully merged class for a specific version, with full Java IDE support (highlighting, completion, navigation) via the existing patchedSrc infrastructure. It is never directly user-accessible as a real file. The active version and target module are stored as metadata on the virtual file.
+*Reverse engine (merge-engine module):*
+Structural AST diff on JavaParser nodes. Takes the edited merged state and the "base" merged state from the version below, outputs the minimal version-layer declarations:
+- Member in edit but not base -> new member in version source
+- Member in both but bodies differ -> `@OverwriteVersion`
+- Member in base but not edit -> `@DeleteMethodsAndFields` entry
+- Inheritance differs -> `@OverwriteInheritance`
+- Unchanged from base -> emit nothing
 
-  *Edit interceptor (IDE plugin):*
-  A `FileDocumentManagerListener.beforeDocumentSaving` listener scoped to version view documents. On save, it reads the current document content and the base merged state (computed via the forward engine for the version below), invokes the reverse engine, and hands the output to the write-back logic. The version view is then refreshed by re-running the forward merge for the edited version.
+The merge engine is already a shared library with single-file entry points, so the reverse engine can live alongside the forward engine.
 
-  *Write-back logic (IDE plugin):*
-  Takes the reverse engine output and applies it to the real version source file using PSI mutations  adding, replacing, or removing declarations and their annotations. Uses the originMap to locate the correct source file for each member being modified. After write-back, triggers a single-file forward merge to update patchedSrc.
+*Version view document (IDE plugin):*
+A `LightVirtualFile` opened by "Open Version View" action. Displays the fully merged class with full Java IDE support via patchedSrc infrastructure. Active version and target module stored as metadata. Never directly user-accessible as a real file.
 
-  *Conflict handling:*
-  If a member being edited in a version view is also overridden by a version above, the write-back flags a warning: the change will be shadowed by the higher version. The user is presented the choice to also update the higher version or leave it.
+*Edit interceptor (IDE plugin):*
+`FileDocumentManagerListener.beforeDocumentSaving` scoped to version view documents. On save: read document content, compute base merged state via forward engine, invoke reverse engine, hand output to write-back logic, refresh version view.
 
-  **Open questions:**
-  - How to handle members that originate from the shared root source (not any specific version)  write-back target would be the shared root directory, not a version module.
-  - Whether the version view should be read-only for members known to come from a higher version layer (since editing them there is a no-op).
-  
-  **Answers**
-  - The shared root source stops being the base to patch into versions, and becomes a simple shadowBundled dependency. 
-    - It works for code that works as a common api for all versions that doesn't need any minecraft classes and therefore never breaks
-    - The plugin can add some utilities for setting up this flow. 
-      - Maybe in multiversionModules can be refactored to {common { include = ['api'];  autoArchitectury(); common()}} where api is the name of the non-minecraft module to be bundled. 
-  - The version view doesn't see any members from a downstream (higher version, current is 1.20.1, higher version is 1.21.1) layer. It only sees them from upstream layers.
-    - The members from an upstream layer are read-only, with a slight grey background. Hovering them lets you trigger overwrite mode, where you edit the member and it stops being read-only.
-    - Depending on what edits you did, the member then gets added to true version src with the body you gave it and the corresponding annotations.
+*Write-back logic (IDE plugin):*
+Applies reverse engine output to real version source via PSI mutations. Uses originMap to locate correct source files. Triggers single-file forward merge to update patchedSrc.
 
-Main deliberation: 
-  I am strongly considering revamping the whole system.
-  I want to turn patchedSrc from just the source truth of the version into the primary interaction method of the developer.
-  I think the current system where the primary interaction is the patch classes is elegant, but it has a key problem:
-You can't see the whole behavior of a class at once. From a DX experience, having everything that class does in one place is essential.
-Proposed new method: Dual system. Keep true version src -> merge engine -> patchedSrc system.
-Version src becomes the source of truth of what code changed in that version, while patchedSrc is created from it.
-Instead, you add something new at the start:
-virtual version src, generated from current version src
-So the final flow is this: 
-virtual version src <--merge engine--> true version src -> merge engine -> patchedSrc
+*Conflict handling:*
+If an edited member is overridden by a higher version, warn that the change will be shadowed. User chooses to also update the higher version or leave it.
 
-For efficiency purposes, you could make the process more circular:
-virtual version src -merge-> true version src -merge-> patchedSrc -merge-> virtual version src
-
-An edit in any of these sources propagates through the other two one-directionally. 
-For this to happen, patchedSrc needs to retain comments, javadocs, and member ordering ideally.
-
-Virtual version src and patchedSrc at a given version are the same content, the only difference is interaction intent. 
-The circular flow is therefore a well-defined event loop with no cycle risk: 
-user edits virtual src → reverse engine diffs against the version-below merged state → writes minimal annotation changes into true version src → forward engine regenerates patchedSrc → virtual src refreshes. 
-The reverse engine is a structural AST diff on JavaParser nodes, producing the same annotation vocabulary the user already writes by hand (@OverwriteVersion, @DeleteMethodsAndFields, @OverwriteInheritance, etc.). 
-The common cases (add, change, delete a member, change inheritance) are all straightforward inversions of what the forward engine already does. The shared MergeEngine library is the hard prerequisite without it the reverse engine has no home that both plugins can reach.
-
-The DX shift is significant: the mental model moves from "I write patches" to "I see the whole class and the system tracks what changed." 
-Upstream members (from older versions) appear in the virtual view with a grey background and are read-only; 
-hovering lets you trigger an overwrite mode that adds the member to true version src with the appropriate annotation. 
-Editing true version src directly still works and round-trips back into the virtual view via a file-watch trigger. 
-The main open risk is the file-open-while-regenerating problem: if the virtual src file is rewritten on disk while the user has it open, IntelliJ's reload dialog appears mid-edit. 
-The clean mitigation is surgical PSI mutation of the open document instead of a full file rewrite, which is more complex but avoids the interruption entirely.
-
-Comments created in the virtual view stay in the virtual view. Javadocs stay attached to their members throughout all sources
-Comments in member bodies stay in member bodies and propagate. Comments outside member bodies don't propagate, they stay in true src or virtual src.
-Member reordering in the virtual view is probably best ignored by the reverse engine.
-However, the virtual view should ideally not be constantly rewritten over and over, and members are modified in place. 
-That way developers can still reorder them as they want.
-Member renames are treated as delete + add. If you want an @OverwriteSignature, you must use the rename tool, the intellij edit signature feature, or a special button added by the plugin.
+**Design decisions:**
+- Shared root source becomes a shadowBundled dependency (common API that never touches minecraft classes). Plugin can add utilities, e.g. `multiversionModules { common { include = ['api']; common() } }`.
+- Version view only shows upstream (older version) members, not downstream. Upstream members are read-only with grey background. Hovering triggers overwrite mode, which adds the member to true version src with appropriate annotations.
+- Comments in member bodies propagate. Comments outside member bodies stay local to their source (true src or virtual src). Javadocs stay attached to their members throughout.
+- Member reordering in virtual view is ignored by the reverse engine. Virtual view uses in-place PSI mutation (not full file rewrite) to avoid IntelliJ's reload dialog during edits.
+- Member renames are treated as delete + add. For `@ModifySignature`, use the rename tool, IntelliJ's edit signature feature, or a plugin button.
 
   
 ### Ambitious #2:
 - Create a database of boilerplate porting situations. Create an automatic system that applies simple ports when necessary
   - https://github.com/neoforged/.github/tree/main/primers seems promising as a place to scrape from.
+  - Example: BlockEntity load and saveAdditional changing signature slightly between 1.20.1 and 1.21.1
 
 ### Ambitious #3 
 - "n usages" code vision overwrite to use the custom findUsages logic.
   - I need to overwrite a DaemonBoundCodeVisionProvider registered by the IDE.
   - Difficult because of version-specific problems.
   - In a perfect world the number returned matches the one given by the custom findUsagesLogic.
+
+### Ambitious #4 
+- Move all minecraft-specific logic into a new gradle plugin to make this project extensible beyond minecraft.
+- The minecraft gradle plugin is then a thinner wrapper that contains mostly architectury and publishing preconfiguration.

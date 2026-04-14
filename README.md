@@ -8,7 +8,7 @@ The plugin also automatically sets up mod publishing to CurseForge and Modrinth 
 This repository includes a template mod, the Gradle plugin, the Gradle settings plugin, and an IntelliJ IDEA plugin. There are also 2 libraries (merge-engine, and annotations) shared by the gradle and IDEA plugins for common operations.
 
 This whole project is still in active development, and some things regarding resource management have not yet been thoroughly tested in production, even if the code is theoretically sound.
-If you have a suggestion, please open a suggestion in the github repository issues page.
+If you have a suggestion, please open a suggestion in the github repository issues page. I am very open to suggestions on how to improve this tool further.
 However, please check todo.md to make sure it is not already planned.
 
 AI DISCLAIMER: Parts of this project were written/assisted by AI. Especially the documentation and debugging.

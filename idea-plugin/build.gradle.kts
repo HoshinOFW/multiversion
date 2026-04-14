@@ -15,7 +15,7 @@ idea {
 }
 
 group = "com.github.hoshinofw.multiversion"
-version = "0.5.4"
+version = "0.5.5"
 
 repositories {
     mavenCentral()
@@ -34,6 +34,7 @@ dependencies {
     intellijPlatform {
         intellijIdeaCommunity("2024.3.1")
         bundledPlugin("com.intellij.java")
+        bundledPlugin("org.jetbrains.kotlin")
     }
 }
 

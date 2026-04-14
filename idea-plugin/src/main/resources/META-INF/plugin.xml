@@ -7,6 +7,10 @@
     <depends>com.intellij.modules.java</depends>
     <depends>org.jetbrains.kotlin</depends>
 
+    <extensions defaultExtensionNs="org.jetbrains.kotlin">
+        <supportsKotlinPluginMode supportsK1="true" supportsK2="true"/>
+    </extensions>
+
     <extensions defaultExtensionNs="com.intellij">
         <notificationGroup id="Multiversion" displayType="BALLOON"/>
         <daemon.highlightInfoFilter implementation="com.github.hoshinofw.multiversion.idea_plugin.OverwriteDuplicateClassHighlightFilter"/>
@@ -27,7 +31,7 @@
         <renamePsiElementProcessor implementation="com.github.hoshinofw.multiversion.idea_plugin.MultiversionRenameProcessor"
                                    order="first"/>
         <findUsagesHandlerFactory implementation="com.github.hoshinofw.multiversion.idea_plugin.PatchedSrcFindUsagesHandlerFactory"
-                                   language="JAVA"/>
+        />
         <postStartupActivity implementation="com.github.hoshinofw.multiversion.idea_plugin.MultiversionProjectStartup"/>
     </extensions>
 
