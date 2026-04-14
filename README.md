@@ -278,6 +278,36 @@ public class MyRenderer extends NewRenderer implements NewInterface { ... }
 
 Works for classes, interfaces (extends), enums (implements), and records (implements). Annotation types have no inheritance and are unaffected.
 
+#### `@ModifySignature`
+Changes a member's signature (name, type, or parameters) while keeping the body from the base version. The string value identifies the old member in the base version using the same descriptor format as `@DeleteMethodsAndFields`. Use a bare name for fields and unambiguous methods, or `methodName(ParamType1, ParamType2)` for overloaded methods. For constructors, use `init` or `init(ParamType1, ParamType2)`.
+
+By default, the body is inherited from the base version. If you also add `@OverwriteVersion`, the body from the new version is used instead.
+
+```java
+// Rename a method (body carries over from base)
+@ModifySignature("oldMethodName")
+public void newMethodName() {}
+
+// Change parameters (body carries over from base)
+@ModifySignature("process(String)")
+public void process(String input, int flags) {}
+
+// Change parameters AND rewrite the body
+@ModifySignature("process(String)")
+@OverwriteVersion
+public void process(String input, int flags) {
+    // new implementation
+}
+
+// Rename a field (initializer carries over from base)
+@ModifySignature("oldFieldName")
+public String newFieldName;
+
+// Change a constructor's parameters
+@ModifySignature("init(String)")
+public MyClass(String name, int id) {}
+```
+
 #### `@DeleteClass`
 Removes the entire class from the merged output. Useful when a class is no longer needed in a newer version.
 

@@ -1,5 +1,6 @@
 package com.github.hoshinofw.multiversion.idea_plugin
 
+import com.github.hoshinofw.multiversion.engine.EngineConfig
 import com.intellij.openapi.vfs.VirtualFile
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
@@ -20,30 +21,6 @@ object EngineConfigCache {
     private data class Entry(val config: EngineConfig, val lastModified: Long)
 
     private val cache = ConcurrentHashMap<String, Entry>()
-
-    // Matches "key": "value" pairs; handles standard JSON string escapes in both key and value.
-    private val ENTRY = Regex(""""([^"\\]+)"\s*:\s*"((?:[^"\\]|\\.)*)"""")
-
-    private fun parseConfig(text: String): EngineConfig {
-        val v = mutableMapOf<String, String>()
-        ENTRY.findAll(text).forEach { m ->
-            v[m.groupValues[1]] = m.groupValues[2]
-                .replace("\\\\", "\u0000").replace("\\/", "/").replace("\\\"", "\"")
-                .replace("\\n", "\n").replace("\\r", "\r").replace("\\t", "\t")
-                .replace("\u0000", "\\")
-        }
-        fun req(k: String) = v[k] ?: error("missing key '$k' in engine config")
-        return EngineConfig(
-            module            = req("module"),
-            mcVersion         = req("mcVersion"),
-            currentSrcDir     = req("currentSrcDir"),
-            baseDir           = req("baseDir"),
-            patchedOutDir     = req("patchedOutDir"),
-            currentSrcRelRoot = req("currentSrcRelRoot"),
-            baseRelRoot       = req("baseRelRoot"),
-            originMapFile     = req("originMapFile"),
-        )
-    }
 
     /**
      * Returns the [EngineConfig] for the versioned module that contains [file], or null if:
@@ -72,7 +49,7 @@ object EngineConfigCache {
         }
 
         val config = try {
-            parseConfig(configFile.readText())
+            EngineConfig.fromJson(configFile.readText())
         } catch (_: Exception) {
             return null
         }

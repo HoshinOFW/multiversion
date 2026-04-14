@@ -1,5 +1,6 @@
 package com.github.hoshinofw.multiversion.idea_plugin
 
+import com.github.hoshinofw.multiversion.engine.EngineConfig
 import com.github.hoshinofw.multiversion.engine.MergeEngine
 import com.github.hoshinofw.multiversion.engine.OriginMap
 import com.github.hoshinofw.multiversion.engine.PathUtil

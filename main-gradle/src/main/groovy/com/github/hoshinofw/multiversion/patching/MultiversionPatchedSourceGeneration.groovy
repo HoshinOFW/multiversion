@@ -1,12 +1,14 @@
 package com.github.hoshinofw.multiversion.patching
 
 import com.github.hoshinofw.multiversion.MultiversionModulesExtension
+import com.github.hoshinofw.multiversion.engine.EngineConfig
 import com.github.hoshinofw.multiversion.engine.MergeEngine
 import com.github.hoshinofw.multiversion.engine.OriginMap
 import com.github.hoshinofw.multiversion.engine.PathUtil
 import com.github.hoshinofw.multiversion.engine.VersionUtil
 import com.github.hoshinofw.multiversion.util.GeneralUtil
 import com.github.hoshinofw.multiversion.util.PatchingUtil
+
 import org.gradle.api.Project
 import org.gradle.api.Task
 import org.gradle.api.file.Directory
@@ -313,18 +315,14 @@ class MultiversionPatchedSourceGeneration {
                 t.description = "Writes build/multiversion-engine-config.json for IDE on-save integration."
                 t.doLast {
                     def configFile = patchP.layout.buildDirectory.file("multiversion-engine-config.json").get().asFile
-                    configFile.parentFile.mkdirs()
-                    def config = [
-                        module           : moduleName,
-                        mcVersion        : patchVer,
-                        currentSrcDir    : mergeCurrentSrcDir.absolutePath,
-                        baseDir          : mergeBaseDir.absolutePath,
-                        patchedOutDir    : outJavaDir.get().asFile.absolutePath,
-                        currentSrcRelRoot: mergeCurrentRelRoot,
-                        baseRelRoot      : mergeBaseRelRoot,
-                        originMapFile    : mapFile.absolutePath
-                    ]
-                    configFile.text = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(config))
+                    def config = new EngineConfig(
+                        moduleName, patchVer,
+                        mergeCurrentSrcDir.absolutePath, mergeBaseDir.absolutePath,
+                        outJavaDir.get().asFile.absolutePath,
+                        mergeCurrentRelRoot, mergeBaseRelRoot,
+                        mapFile.absolutePath
+                    )
+                    config.toFile(configFile)
                 }
             }
 
