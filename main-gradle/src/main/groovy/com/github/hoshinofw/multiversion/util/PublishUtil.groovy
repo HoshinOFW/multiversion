@@ -2,10 +2,6 @@ package com.github.hoshinofw.multiversion.util
 
 import org.gradle.api.GradleException
 import org.gradle.api.Project
-import org.gradle.api.provider.Provider
-import org.gradle.internal.impldep.org.apache.commons.lang.NullArgumentException
-
-import java.util.function.BooleanSupplier
 
 class PublishUtil {
 
