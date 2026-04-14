@@ -5,7 +5,7 @@ It works by layering source sets on top of each other, from the oldest version g
 What that means is that you can write the full 1.20.1 version of a mod using Architectury to add support for both Fabric and Forge/NeoForge, and the only thing you have to do to add support for 1.21.1 (NeoForge and Fabric) is re-write the classes that broke between versions.
 The plugin also automatically sets up mod publishing to CurseForge and Modrinth if given the appropriate Gradle properties.
 
-This repository includes a template mod, the Gradle plugin, the Gradle settings plugin, and an IntelliJ IDEA plugin.
+This repository includes a template mod, the Gradle plugin, the Gradle settings plugin, and an IntelliJ IDEA plugin. There are also 2 libraries (merge-engine, and annotations) shared by the gradle and IDEA plugins for common operations.
 
 This whole project is still in active development, and some things regarding resource management have not yet been thoroughly tested in production, even if the code is theoretically sound.
 If you have a suggestion, please open a suggestion in the github repository issues page.
@@ -401,36 +401,45 @@ Place a `changelog.md` file at the root of the project. Its contents are sent as
 
 #### Running a publish
 
-Collect the JARs, then publish:
+Two publish tasks are available:
 
 ```bash
-./gradlew collectBuildsAll
+./gradlew publishAllMods
+```
+
+`publishAllMods` builds, collects, and publishes all mod JARs to CurseForge and Modrinth in one step. It automatically runs `collectBuildsAll` before publishing.
+
+```bash
+./gradlew publishAllSafe
+```
+
+`publishAllSafe` does the same thing but runs in **dry-run mode** by default. To actually publish, pass `-PPUBLISH_RELEASE=true`:
+
+```bash
 ./gradlew publishAllSafe -PPUBLISH_RELEASE=true
 ```
 
-`collectBuildsAll` triggers the build for every version/loader subproject and copies the resulting JARs into `builds/<mod_version>/<minecraft_version>/<loader>/`. You can also collect a single subproject by running its `collectBuilds` task directly, e.g. `./gradlew :1.21.1:neoforge:collectBuilds`.
+This is useful for verifying that credentials and properties are wired correctly before committing to a release.
 
-Without `-PPUBLISH_RELEASE=true` the publish task runs in dry-run mode and does not upload anything. This is useful for checking that credentials and properties are wired correctly before committing to a release.
-
-The collected JARs are placed under `builds/<mod_version>/<minecraft_version>/<loader>/` and are what gets uploaded. You can inspect them before publishing.
+You can also collect JARs without publishing by running `collectBuildsAll` directly, or collect a single subproject via its `collectBuilds` task (e.g. `./gradlew :1.21.1:neoforge:collectBuilds`). Collected JARs are placed under `builds/<mod_version>/<minecraft_version>/<loader>/`.
 
 ---
 
 ### Development flow
 
-patchedSrc is the merged source tree that the IDE uses for error checking, navigation, and compilation. It is not generated automatically on every file save — you need to run `generateAllPatchedSrc` to bring it up to date after making changes across versions.
+patchedSrc is the merged source tree that the IDE uses for error checking, navigation, and compilation.
 
+With the IDE plugin installed, patchedSrc is refreshed automatically.
+The main exception to this is field and method body, which stay stale until a full version refresh is triggered.
+This is not an issue while you're coding, because method/field removals (and therefore reference viability) are refreshed automatically.
+If you are manually debugging patchedSrc and want to update method/field bodies without a full version refresh, saving the file manually (Usually CTRL + S in IDEA) will refresh bodies.
+
+If you want to manually refresh all patchedSrc across all versions and modules, run the gradle task:
 ```bash
 ./gradlew generateAllPatchedSrc
 ```
 
-This task runs automatically on two occasions:
-- **After Gradle sync** — so the IDE always has an up-to-date patchedSrc when you open or refresh the project.
-- **On build** — compilation always uses the latest merged output.
-
-If you edit a version-specific class and the IDE is showing stale errors or missing members in patchedSrc, run `generateAllPatchedSrc` manually (or re-sync) to regenerate it.
-
-> **Planned:** Future versions of the IDE plugin will regenerate the relevant patchedSrc file automatically in the background whenever a versioned source file is saved, removing the need to run the task manually during active development.
+This task also runs automatically on build, so compilation always uses the latest merged output.
 
 ---
 
@@ -443,6 +452,7 @@ An IntelliJ IDEA plugin is available on the JetBrains Marketplace, simply called
 - Method/field descriptor validation
 - Annotation validation
 - Support for refactoring classes, fields, and methods across versions.
+- Correct Find Usages search across versions via patchedSrc. Note: the inline "n usages" code lens may show an incorrect count due to IntelliJ limitations, but clicking it runs the real search and returns the correct results.
 - Probably other things too, I don't update this list.
 
 It is strongly recommended you also use the Minecraft Development plugin, as it will provide support for actual mod dev. The Architectury plugin can also be quite useful.

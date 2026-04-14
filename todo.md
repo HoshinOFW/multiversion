@@ -1,57 +1,56 @@
+### Next Implementation: Merging more into merge engine
+
+Treat the engine as a true common library, not just something that owns merge logic.
+
+**Tier 1: High impact**
+
+1. **EngineConfig data class + parsing into engine**
+   - Gradle writes `multiversion-engine-config.json` with ad-hoc serialization (`MultiversionPatchedSourceGeneration.groovy:311-329`).
+   - IDE reads it with custom regex parsing in `EngineConfigCache.kt` (fragile, no JSON library, manual unescaping).
+   - Move to engine: `EngineConfig` data class with `fromJson()`/`toJson()`. Both consumers use the engine's contract type. IDE keeps its cache layer (IntelliJ-specific), but parsing and data model live in one place.
+   - Riskiest duplication: a format mismatch between writer and reader is a silent, hard-to-debug failure.
+
+2. **Resource patching logic into engine**
+   - `PatchingUtil.groovy` loads `multiversion-resources.json` and applies delete/move operations. IDE doesn't do this yet, but would have to reimplement if live patchedSrc updates ever handle resources.
+   - Move to engine: config loading (`loadResourcePatchConfig`) and application logic (`applyResourcePatch`). Gradle calls it at build time; IDE could call it if/when needed.
+   - This is merge-adjacent logic (layered resource patching follows the same model as source patching).
+   - Already listed below in "Engine + Annotations" but blocked on more resource patching features being added.
+
+3. **Version regex pattern constant**
+   - Pattern `\d+\.\d+(\.\d+)?` appears independently in `DescriptorAnnotationSupport.kt:153` (IDE), `GeneralUtil.groovy` (Gradle, as `looksLikeMcVersion`), and is implicitly assumed by `VersionUtil.compareVersions`.
+   - Add `VERSION_PATTERN` constant and `looksLikeVersion(s: String): Boolean` to `VersionUtil`. Tiny change, eliminates subtle divergence.
+
+**Tier 2: Medium impact, clean wins**
+
+4. **OriginMapCache into engine**
+   - `PatchedSrcGotoDeclarationHandler.kt` has an inner `OriginMapCache` (lines 109-198): wraps `OriginMap` with file-modification-based invalidation and pre-resolved `OriginResolver` instances. This is general-purpose caching, not IDE-specific.
+   - Move to engine as `CachedOriginMap` or similar. IDE keeps VirtualFile/IntelliJ wiring but delegates cache logic.
+
+5. **Eliminate small duplications in IDE plugin**
+   - `DescriptorAnnotationSupport.kt:147,235`: manual type simplification (`substringAfterLast(".").replace("[]","")`) duplicates `MemberDescriptor.simpleTypeName()`.
+   - `PatchedSrcFindUsagesHandlerFactory.kt:35-36`: manual `Paths.get().relativize().replace('\\','/')` duplicates `PathUtil.relativize()`.
+   - `DescriptorAnnotationSupport.kt:153`: private `VERSION_REGEX` duplicates the pattern from item 3.
+
+**Tier 3: Low impact / skip**
+
+6. **Module type detection (fabric/forge/neoforge/common)**: Gradle works with `Project` objects, IDE with `VirtualFile`. Logic is trivial (check directory name). Abstracting over the file system adds more complexity than it removes. Leave as-is.
+
+7. **Dead `CollectionUtil.compareMcVersions()` in Gradle**: never called, Gradle already uses `VersionUtil.compareVersions()` from engine. Just delete it.
+
+---
+
 ### Observed Bugs:
 
-
 ### Test:
+- Add another version to mod-template to help test more complex hierarchies.
 - Test refactoring support for all classes.
 - Test class types such as record, interface, etc. Make sure they work properly
 - Test rename refactor for constructors.
 
-- **IDE Major Features**
-
-  The goal is for patchedSrc to be the source of truth for all IDE queries, with originMap acting as an encoder/decoder.
-  The ideal flow: IDEA queries usages of `1.21.1/fabric/SomeClass#fooField` -> query is intercepted and run against patchedSrc instead -> results are remapped back to real source via originMap before being shown.
-
-  **Why a fully generalized interceptor is not achievable:**
-  IntelliJ has no single query bus. Each operation type has its own independent subsystem and extension point.
-  There is no plugin-accessible layer that sits in front of all of them.
-
-  **What is achievable - targeted implementations per operation:**
-
-  | Operation | Feasibility | Extension Point |
-  |---|---|---|
-  | Find Usages | High | `FindUsagesHandlerFactory` |
-  | Type/Call Hierarchy | Medium | `TypeHierarchyProvider`, `CallHierarchyProvider` |
-  | Rename | Done | `RenamePsiElementProcessor` |
-  | Move | Done | `RefactoringEventListener` |
-  | Inline/Extract/structural refactors | Very hard | No clean extension point |
-  | Error highlighting | Suppression only | `HighlightInfoFilter` |
-
-  **Find Usages implementation plan:**
-  1. `FindUsagesHandlerFactory` detects element is in a versioned source root
-  2. Resolve inverse originMap: given `SomeClass.java#fooField` in versioned source, find the corresponding PSI element in patchedSrc
-  3. Run native Find Usages scoped entirely to patchedSrc
-  4. Map each result `UsageInfo` forward through originMap back to real source before returning
-
-  The inverse originMap lookup (step 2) requires scanning the TSV for values matching the current file, or maintaining a reverse index cache.
-
-  **Note on "patchedSrc as sole source root":**
-  Removing versioned source roots would break error highlighting, code completion, and type resolution in versioned files.
-  Both source sets must remain. The consequence is classes are indexed twice, and targeted suppression (like the existing highlight filters) is the only tool for deduplication per operation.
-
-  Find Usages is the recommended first investment here - highest impact, cleanest extension point.
-  
-  For every case: The idea is to allow there to be two source sets at all times (for many many reasons this is the best way), but 
-
----
-
 ### Engine + Annotations:
-Usually these things also have their own cascading implementations in Gradle and IDEA, but they are listed here as the origin entry.
-- Add a @ModifySignature annotation that allows you to modify the signature of a member.
-  - Takes in the target upstream (older) member. Same syntax as @DeleteMethodsAndFields.
-      - The upstream member reference must be added to also be the target of rename and move refactors.
-    - If no @OverwriteVersion is given, the original member body is still kept.
-      - It is up to the user to ensure method body remains error-free throughout member signature changes if no new body is given.
-    - This annotation would join @OverwriteVersion and @ShadowVersion as declarations that the method is making some modification.
+- Unify everything under the engine.
+  - ATM the IDE has to resolve old member references. The engine should own the methods for this.
+  - Check everything else that the engine should own/.
 - Add support for inner classes.
 - Add support for records.
 - Add enum constants to refactoring support.
@@ -61,7 +60,8 @@ Usually these things also have their own cascading implementations in Gradle and
 - Create and enforce @ModifyClass to make modifications explicit.
   - the target is implicit via class name, although the annotation can optionally also take a string parameter to have a separate target name.
     - This way the developer has some control over routing.
-    - 
+- Transfer resource patching from the gradle plugin into the merge engine if possible.
+  - Only really useful once more features are added to resource patching.
 
 ### Gradle:
 
@@ -72,13 +72,10 @@ Usually these things also have their own cascading implementations in Gradle and
   - multiversion_resources.json path
 - Add an easy way to wire all versioned tasks to one main task. It should be possible to wire all :mc_version:fooTask into one :fooTask, and/or all :mc_version:module:fooTask into :fooTask
 - Add support for more types of mappings in architectury gradle.
-- Add better caching control to make sure that gradle knows files haven't changed and only apply changes to patchedSrc.
 
----
 
 ### IDE:
 
-- Suppress `Variable variableName might not have been initialized` errors from the IDE when the variable `variableName` is annotated with @ShadowVersion. 
 - Add IDE suggestions via a small warning, such as `Missing original annotations` on hover for methods/fields that have @ShadowVersion and the original is also @Foo. The warning would have a button you can use to copy the annotations over.
 - Add more IDE suggestions such as: `Method found in original class, but no @ShadowVersion or @OverwriteVersion provided` which would then have a button to add @ShadowVersion
   - The same thing for @ModifyClass when that gets added.
@@ -98,6 +95,12 @@ Usually these things also have their own cascading implementations in Gradle and
     - Variation to just go up or down a version, and a variation to do that for the target of the annotation.
     - There is also a button next to the multiversion annotation that does the same thing as the.
   - A keybind that opens up a small menu showing you all the versions the class you're in or method/field you're targeting has. Lets you navigate between them and create net versions.
+- IDE should refresh the visual file tree after a file is added/removed from patchedSrc.
+  - Suuper low priority, arguably not worth it unless it is possible to refresh only that patchedSrc directory.
+- IDE: When you add the @ModifySignature to a method, the IDE should scan future versions that still reference the old signature.
+  - A dialogue should open up with a warning and an option to refactor.
+  - Clicking refactor should open the same menu as clicking Safe Delete usually does. It lists the references across files (across versions in this codebase) and lets you edit them.
+  - Maybe there could also be some other button to attempt the refactor automatically. It would change all references to the old method in downstream methods to the new method signature. 
 
 ---
 
@@ -123,7 +126,6 @@ That is essentially the role of the reverse engine, to look at an edited file, c
   **Feasibility: Medium-High.** The forward engine already solves the hard structural problem. The reverse direction is a well-defined inversion of it, with the main complexity sitting in the virtual document infrastructure and the write-back attribution logic.
 
   **Prerequisites:**
-  - Shared MergeEngine library extracted (see Implementation Plans)  reverse engine lives alongside the forward engine in the same module.
   - Comments and Javadoc preserved through the forward merge, otherwise edits made in the version view are silently lossy on the first round-trip.
   - Single-file merge entry point (Phase 1 of MergeEngine plan)  needed to efficiently regenerate patchedSrc after a write-back.
 
@@ -204,3 +206,9 @@ Member renames are treated as delete + add. If you want an @OverwriteSignature, 
 ### Ambitious #2:
 - Create a database of boilerplate porting situations. Create an automatic system that applies simple ports when necessary
   - https://github.com/neoforged/.github/tree/main/primers seems promising as a place to scrape from.
+
+### Ambitious #3 
+- "n usages" code vision overwrite to use the custom findUsages logic.
+  - I need to overwrite a DaemonBoundCodeVisionProvider registered by the IDE.
+  - Difficult because of version-specific problems.
+  - In a perfect world the number returned matches the one given by the custom findUsagesLogic.

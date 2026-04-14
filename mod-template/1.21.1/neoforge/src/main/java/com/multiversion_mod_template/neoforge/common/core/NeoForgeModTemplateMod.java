@@ -5,11 +5,8 @@ import net.neoforged.fml.common.Mod;
 
 @Mod(ModTemplateMod.MOD_ID)
 public class NeoForgeModTemplateMod {
-
     public NeoForgeModTemplateMod() {
-
-
-
+        ModTemplateMod.init();
     }
 
 }

@@ -1,3 +1,29 @@
+<h2>0.5.4</h2>
+<ul>
+  <li> Many many smaller bugfixes and changes, as well as refactors for future maintainability. </li>
+</ul>
+
+<h2>0.5.3</h2>
+<ul>
+  <li><strong>Auto-update on structural changes</strong> Adding or removing a method, field, or inner class now triggers a patchedSrc re-merge in the background without saving.</li>
+  <li><strong>File deletion cascade</strong> Deleting a versioned source file now triggers a cascading patchedSrc recompute for the affected version and all downstream versions.</li>
+  <li><strong>New file detection</strong> Creating a new <code>.java</code> file in a versioned source directory automatically merges it into patchedSrc.</li>
+  <li><strong>Origin map consistency</strong> The origin map is now kept up to date across all update paths (save, structural change, file creation, file deletion), fixing stale navigation after incremental edits.</li>
+  <li><strong>BUG FIX</strong> Multiversion annotations (<code>@OverwriteVersion</code>, <code>@ShadowVersion</code>, etc.) no longer leak into merged patchedSrc output as imports.</li>
+  <li><strong>BUG FIX</strong> Edits to the base version (e.g. 1.20.1) now correctly cascade to all downstream patchedSrc (1.21.1, etc.).</li>
+  <li><strong>BUG FIX</strong> Fixed <code>SlowOperations</code> violation when opening files in patchedSrc.</li>
+</ul>
+
+<h2>0.5.2</h2>
+<ul>
+  <li><strong>Find Usages</strong> Find Usages on a method, field, or class in a versioned source root now searches <code>patchedSrc</code> instead of true source, then maps each result back to its real source file and line via the origin map.</li>
+</ul>
+
+<h2>0.5.1</h2>
+<ul>
+  <li>Bumped merge engine version<li>
+</ul>
+
 <h2>0.5.0</h2>
 <ul>
   <li><strong>On-save patchedSrc update</strong> Saving a versioned source file now automatically re-merges it into <code>patchedSrc</code>, keeping the IDE's view of the merged class in sync without a full Gradle sync.</li>

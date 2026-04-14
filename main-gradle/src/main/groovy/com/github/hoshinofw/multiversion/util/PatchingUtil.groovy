@@ -145,18 +145,6 @@ class PatchingUtil {
         }
     }
 
-    static def parseVer(String v) {return v.split(/\./).collect { it as int } }
-
-    static int compareVer(String a, String  b) {
-        def pa = parseVer(a); def pb = parseVer(b)
-        def n = Math.max(pa.size(), pb.size())
-        for (int i = 0; i < n; i++) {
-            def ai = i < pa.size() ? pa[i] : 0
-            def bi = i < pb.size() ? pb[i] : 0
-            if (ai != bi) return ai <=> bi
-        }
-        0
-    }
 
     static LinkedHashSet<String> relFileSet(File root) {
         def out = new LinkedHashSet<String>()

@@ -30,18 +30,9 @@ class MainMultiversionPlugin implements Plugin<Project> {
             p.extensions.create("multiversion", MultiversionProjectExtension, p)
         }
 
-
         TaskProvider<Task> genAll = target.tasks.register("generateAllPatchedSrc") {
             it.group = "build setup"
             it.description = "Generates all patchedSrc trees for IDE sync/import."
-        }
-
-        target.plugins.withId("org.jetbrains.gradle.plugin.idea-ext") {
-            target.idea.project.settings {
-                it.taskTriggers {
-                    it.afterSync(genAll)
-                }
-            }
         }
 
         target.afterEvaluate {

@@ -1,11 +1,11 @@
 package com.github.hoshinofw.multiversion.idea_plugin
 
+import com.github.hoshinofw.multiversion.engine.OriginMap
+import com.github.hoshinofw.multiversion.engine.PathUtil
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.project.Project
 import com.intellij.psi.*
-import com.intellij.psi.SmartPointerManager
-import com.intellij.psi.SmartPsiElementPointer
 import com.intellij.refactoring.listeners.RefactoringEventData
 import com.intellij.refactoring.listeners.RefactoringEventListener
 import com.intellij.refactoring.move.moveFilesOrDirectories.MoveFilesOrDirectoriesUtil
@@ -74,7 +74,7 @@ class MultiversionMoveListener(private val project: Project) : RefactoringEventL
             val srcRoot    = getVersionedSourceRoot(file)              ?: return
             val moduleRoot = getVersionedModuleRoot(file)              ?: return
             val relClassPath = try {
-                srcRoot.toNioPath().relativize(file.toNioPath()).toString().replace('\\', '/')
+                PathUtil.relativize(srcRoot.toNioPath(), file.toNioPath())
             } catch (_: Exception) { return }
 
             pendingRename = SavedRename(
@@ -130,7 +130,7 @@ class MultiversionMoveListener(private val project: Project) : RefactoringEventL
 
                         // Propagate file move to all other version source files.
                         for (laterRoot in findAllVersionModuleRoots(move.moduleRoot).filter { it != move.moduleRoot }) {
-                            val laterSrcRoot = laterRoot.findFileByRelativePath("src/main/java") ?: continue
+                            val laterSrcRoot = laterRoot.findFileByRelativePath(PathUtil.TRUE_SRC_MARKER) ?: continue
                             val targetFile   = laterSrcRoot.findFileByRelativePath(oldRelPath)   ?: continue
                             val psiFile      = psiManager.findFile(targetFile) as? PsiJavaFile   ?: continue
 
@@ -177,79 +177,35 @@ class MultiversionMoveListener(private val project: Project) : RefactoringEventL
             val dir        = saved.relClassPath.substringBeforeLast('/', "")
             val oldRelPath = saved.relClassPath
             val newRelPath = if (dir.isEmpty()) "$newName.java" else "$dir/$newName.java"
-            updateTsvFilePathEntries(saved.moduleRoot, oldRelPath, newRelPath)
+            patchAllVersionMaps(saved.moduleRoot) { map -> map.renameFile(oldRelPath, newRelPath) }
         } else {
             // Method or field rename: update member-key portion of TSV keys.
             val oldPrefix = if (saved.isMemberMethod) "$oldMemberName(" else oldMemberName
             val newPrefix = if (saved.isMemberMethod) "$newName("       else newName
-            updateTsvMemberEntries(saved.moduleRoot, saved.relClassPath, oldPrefix, newPrefix)
+            patchAllVersionMaps(saved.moduleRoot) { map ->
+                map.renameMember(saved.relClassPath, oldPrefix, newPrefix)
+            }
         }
     }
 
-    /**
-     * Replaces [oldRelPath] with [newRelPath] in both the key and value columns of every
-     * _originMap.tsv found under any version module's patchedSrc directory.
-     */
     private fun updateTsvFilePathEntries(
         moduleRoot: com.intellij.openapi.vfs.VirtualFile,
         oldRelPath: String,
-        newRelPath: String
+        newRelPath: String,
     ) {
-        patchTsvFiles(moduleRoot) { key, value ->
-            val newKey = if (key == oldRelPath || key.startsWith("$oldRelPath#"))
-                newRelPath + key.substring(oldRelPath.length)
-            else key
-            // Value stores a longer path; replace the Java-relative segment inside it.
-            val newValue = value.replace(oldRelPath, newRelPath)
-            Pair(newKey, newValue)
-        }
+        patchAllVersionMaps(moduleRoot) { map -> map.renameFile(oldRelPath, newRelPath) }
     }
 
-    /**
-     * Renames the member-key part of TSV entries for [relClassPath].
-     * [oldPrefix] is the old method/field identifier (e.g. `"foo("` or `"myField"`),
-     * [newPrefix] is the replacement.
-     */
-    private fun updateTsvMemberEntries(
+    private fun patchAllVersionMaps(
         moduleRoot: com.intellij.openapi.vfs.VirtualFile,
-        relClassPath: String,
-        oldPrefix: String,
-        newPrefix: String
-    ) {
-        patchTsvFiles(moduleRoot) { key, value ->
-            val marker = "$relClassPath#$oldPrefix"
-            val newKey = if (key.startsWith(marker))
-                "$relClassPath#$newPrefix${key.substring(marker.length)}"
-            else key
-            Pair(newKey, value)
-        }
-    }
-
-    /**
-     * Iterates every _originMap.tsv in every version module's patchedSrc, applies
-     * [transform] to each (key, value) pair, and writes the file back if anything changed.
-     */
-    private fun patchTsvFiles(
-        moduleRoot: com.intellij.openapi.vfs.VirtualFile,
-        transform: (key: String, value: String) -> Pair<String, String>
+        action: (OriginMap) -> Unit,
     ) {
         for (root in findAllVersionModuleRoots(moduleRoot)) {
-            val tsv = File(root.path, "build/patchedSrc/_originMap.tsv")
+            val tsv = File(root.path, "${PathUtil.PATCHED_SRC_DIR}/${PathUtil.ORIGIN_MAP_FILENAME}")
             if (!tsv.exists()) continue
-
-            val lines = tsv.readLines()
-            var changed = false
-            val newLines = lines.map { line ->
-                val tab = line.indexOf('\t')
-                if (tab < 0) return@map line
-                val oldKey   = line.substring(0, tab)
-                val oldValue = line.substring(tab + 1)
-                val (newKey, newValue) = transform(oldKey, oldValue)
-                if (newKey == oldKey && newValue == oldValue) line
-                else { changed = true; "$newKey\t$newValue" }
-            }
-
-            if (changed) tsv.writeText(newLines.joinToString("\n"))
+            val map = OriginMap.fromFile(tsv)
+            action(map)
+            map.toFile(tsv)
         }
     }
 }

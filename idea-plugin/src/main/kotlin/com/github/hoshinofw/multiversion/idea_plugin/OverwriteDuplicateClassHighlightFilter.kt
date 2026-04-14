@@ -1,20 +1,18 @@
 package com.github.hoshinofw.multiversion.idea_plugin
 
+import com.github.hoshinofw.multiversion.engine.PathUtil
 import com.intellij.codeInsight.daemon.impl.HighlightInfo
 import com.intellij.codeInsight.daemon.impl.HighlightInfoFilter
 import com.intellij.lang.annotation.HighlightSeverity
+import com.intellij.psi.JavaPsiFacade
 import com.intellij.psi.PsiFile
 import com.intellij.psi.PsiJavaFile
-import com.intellij.psi.JavaPsiFacade
 import com.intellij.psi.search.GlobalSearchScope
 
 private val VERSION_DIR_REGEX = Regex("""/([0-9]+\.[0-9]+(\.[0-9]+)?)/""")
+private val PATCHED_SEGMENT = "/${PathUtil.PATCHED_SRC_DIR}/"
 
 class OverwriteDuplicateClassHighlightFilter : HighlightInfoFilter {
-
-    companion object {
-        private const val PATCHED_SEGMENT = "/build/patchedSrc/"
-    }
 
     override fun accept(info: HighlightInfo, file: PsiFile?): Boolean {
         val javaFile = file as? PsiJavaFile ?: return true
@@ -49,4 +47,3 @@ class OverwriteDuplicateClassHighlightFilter : HighlightInfoFilter {
         return true
     }
 }
-

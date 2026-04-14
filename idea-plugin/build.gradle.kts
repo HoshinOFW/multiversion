@@ -2,12 +2,20 @@ import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 
 plugins {
     kotlin("jvm") version "2.0.21"
-    id("com.gradle.plugin-publish") version "1.3.1"
     id("org.jetbrains.intellij.platform") version "2.3.0"
+    id("maven-publish")
+    id("idea")
+}
+
+idea {
+    module {
+        isDownloadSources = true
+        isDownloadJavadoc = true
+    }
 }
 
 group = "com.github.hoshinofw.multiversion"
-version = "0.5.0"
+version = "0.5.4"
 
 repositories {
     mavenCentral()
@@ -17,11 +25,11 @@ repositories {
 }
 
 val mainDir = projectDir.parentFile
-val mod_template_libs_dir = File(mainDir, "mod-template/libs/m2")
-
+val engineVersion = file("../merge-engine/gradle.properties").readLines()
+    .first { it.startsWith("merge_engine_version=") }.substringAfter("=")
 
 dependencies {
-    implementation("com.github.hoshinofw.multiversion:multiversion-merge-engine:0.1.0")
+    implementation("com.github.hoshinofw.multiversion:multiversion-merge-engine:${engineVersion}")
 
     intellijPlatform {
         intellijIdeaCommunity("2024.3.1")

@@ -21,7 +21,7 @@ repositories {
 }
 
 dependencies {
-    api("com.github.javaparser:javaparser-core:3.26.3")
+    api("com.github.javaparser:javaparser-core:3.17.0")
 }
 
 publishing {

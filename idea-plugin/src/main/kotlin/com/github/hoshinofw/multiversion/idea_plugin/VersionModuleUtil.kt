@@ -1,5 +1,7 @@
 package com.github.hoshinofw.multiversion.idea_plugin
 
+import com.github.hoshinofw.multiversion.engine.PathUtil
+import com.github.hoshinofw.multiversion.engine.VersionUtil.compareVersions
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
@@ -44,6 +46,17 @@ fun getVersionedModuleRoot(file: VirtualFile): VirtualFile? =
     getVersionedSourceRoot(file)?.parent?.parent?.parent  // java → main → src → module
 
 /**
+ * Returns every `<version>/<module>` root in the project regardless of module name,
+ * by scanning all version directories under the project root (grandparent of [anyModuleRoot]).
+ */
+fun findAllVersionModuleRootsAcrossProject(anyModuleRoot: VirtualFile): List<VirtualFile> {
+    val versionsRoot = anyModuleRoot.parent?.parent ?: return emptyList()
+    return versionsRoot.children
+        .filter { it.isDirectory && VERSION_PATTERN.matches(it.name) }
+        .flatMap { versionDir -> versionDir.children.filter { it.isDirectory } }
+}
+
+/**
  * Returns all `<version>/<module>` roots that share the same module name as [moduleRoot],
  * sorted oldest-to-newest.
  */
@@ -70,17 +83,7 @@ fun findLaterVersionModuleRoots(moduleRoot: VirtualFile): List<VirtualFile> {
  */
 fun findCorrespondingFile(originFile: VirtualFile, originSrcRoot: VirtualFile, targetModuleRoot: VirtualFile): VirtualFile? =
     try {
-        val rel = originSrcRoot.toNioPath().relativize(originFile.toNioPath()).toString().replace('\\', '/')
-        targetModuleRoot.findFileByRelativePath("src/main/java/$rel")
+        val rel = PathUtil.relativize(originSrcRoot.toNioPath(), originFile.toNioPath())
+        targetModuleRoot.findFileByRelativePath("${PathUtil.TRUE_SRC_MARKER}/$rel")
     } catch (_: Exception) { null }
 
-/** Semantic version comparison ("1.20.1" < "1.21.0"). */
-fun compareVersions(a: String, b: String): Int {
-    val pa = a.split(".").mapNotNull { it.toIntOrNull() }
-    val pb = b.split(".").mapNotNull { it.toIntOrNull() }
-    for (i in 0 until maxOf(pa.size, pb.size)) {
-        val diff = pa.getOrElse(i) { 0 } - pb.getOrElse(i) { 0 }
-        if (diff != 0) return diff
-    }
-    return 0
-}

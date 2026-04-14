@@ -12,8 +12,11 @@
 
 <h3>IDE Features</h3>
 <ul>
+  <li><strong>Live patchedSrc updates:</strong> saves, structural edits (adding/removing members), new file creation, and file deletion all trigger an immediate re-merge of patchedSrc with cascading to downstream versions. Run <code>generateAllPatchedSrc</code> manually only for a full codebase refresh.</li>
   <li>Go to Declaration navigates to the correct original source file and line.</li>
-  <li>Suppresses multiple errors that result from the multiple existing source sets, as well as errors that the IDE flags but will not be present at compile time.</li>
+  <li>Find Usages searches patchedSrc and maps results back to real source files.</li>
+  <li>Suppresses false errors caused by multiple source sets and compile-time-only annotations.</li>
+  <li>Refactoring support: renames and moves propagate across all version modules.</li>
 </ul>
 
 <p>

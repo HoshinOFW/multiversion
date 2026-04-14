@@ -1,35 +1,65 @@
 package com.github.hoshinofw.multiversion.engine
 
-import java.io.BufferedWriter
 import java.io.File
 
 object MergeEngine {
 
-    // ---- true src -> patched src ----
+    // ---- Content-based API ----
 
     /**
-     * Walks [currentSrcDir] and merges every `.java` file into [patchedOutDir],
-     * using [baseDir] as the accumulated base for this version step.
-     *
-     * [currentSrcRelRoot] and [baseRelRoot] are relative root labels written into [mapOut]
-     * so the IDE can resolve member origins back to their actual source file.
+     * Pure content merge: (content?, content?) -> MergeResult.
+     * Null content means the file is absent.
      */
-    fun versionUpdatePatchedSrc(
-        currentSrcDir: File,
-        baseDir: File,
-        patchedOutDir: File,
+    fun mergeFileContent(
+        currentContent: String?,
+        baseContent: String?,
+        rel: String,
         currentSrcRelRoot: String,
         baseRelRoot: String,
-        mapOut: BufferedWriter?,
-    ) = True2PatchMergeEngine.processVersion(
-        currentSrcDir, baseDir, patchedOutDir, currentSrcRelRoot, baseRelRoot, mapOut
+        baseOriginMap: OriginMap? = null,
+    ): MergeResult = True2PatchMergeEngine.mergeContent(
+        currentContent, baseContent, rel, currentSrcRelRoot, baseRelRoot, baseOriginMap
     )
 
     /**
-     * Merges a single [currentFile] into [outFile] using [baseFile] as the base for this version step.
-     * Intended for on-save IDE integration where only one file changes at a time.
-     *
-     * [rel] is the file's path relative to its source root (e.g. `com/example/Foo.java`).
+     * Content in, file out: merges and writes the result to [outFile].
+     * Returns the MergeResult (including origin entries).
+     */
+    fun mergeFileContentToFile(
+        currentContent: String?,
+        baseContent: String?,
+        outFile: File,
+        rel: String,
+        currentSrcRelRoot: String,
+        baseRelRoot: String,
+        baseOriginMap: OriginMap? = null,
+    ): MergeResult {
+        val result = True2PatchMergeEngine.mergeContent(
+            currentContent, baseContent, rel, currentSrcRelRoot, baseRelRoot, baseOriginMap
+        )
+        writeResult(result, outFile)
+        return result
+    }
+
+    /**
+     * File in, content out: reads files from disk, merges, returns result without writing.
+     */
+    fun mergeFileFromFiles(
+        currentFile: File,
+        baseFile: File,
+        rel: String,
+        currentSrcRelRoot: String,
+        baseRelRoot: String,
+        baseOriginMap: OriginMap? = null,
+    ): MergeResult = True2PatchMergeEngine.mergeContent(
+        if (currentFile.exists()) currentFile.readText(Charsets.UTF_8) else null,
+        if (baseFile.exists()) baseFile.readText(Charsets.UTF_8) else null,
+        rel, currentSrcRelRoot, baseRelRoot, baseOriginMap
+    )
+
+    /**
+     * File in, file out, with optional origin map patching.
+     * Existing API used by the IDE plugin.
      */
     fun fileUpdatePatchedSrc(
         currentFile: File,
@@ -38,10 +68,59 @@ object MergeEngine {
         rel: String,
         currentSrcRelRoot: String,
         baseRelRoot: String,
-        mapOut: BufferedWriter?,
-    ) = True2PatchMergeEngine.mergeFile(
-        currentFile, baseFile, outFile, rel, currentSrcRelRoot, baseRelRoot, mapOut
+        originMapFile: File? = null,
+        baseOriginMap: OriginMap? = null,
+    ) {
+        val currentContent = if (currentFile.exists()) currentFile.readText(Charsets.UTF_8) else null
+        val baseContent = if (baseFile.exists()) baseFile.readText(Charsets.UTF_8) else null
+        val result = mergeFileContentToFile(
+            currentContent, baseContent, outFile, rel, currentSrcRelRoot, baseRelRoot, baseOriginMap
+        )
+        if (originMapFile != null) {
+            val map = OriginMap.fromFile(originMapFile)
+            map.patchFile(rel, result.originEntries)
+            map.toFile(originMapFile)
+        }
+    }
+
+    // ---- Batch API ----
+
+    /**
+     * Walks [currentSrcDir] and merges every `.java` file into [patchedOutDir],
+     * using [baseDir] as the accumulated base for this version step.
+     *
+     * [currentSrcRelRoot] and [baseRelRoot] are relative root labels written into [originMap]
+     * so the IDE can resolve member origins back to their actual source file.
+     */
+    @JvmStatic
+    fun versionUpdatePatchedSrc(
+        currentSrcDir: File,
+        baseDir: File,
+        patchedOutDir: File,
+        currentSrcRelRoot: String,
+        baseRelRoot: String,
+        originMap: OriginMap?,
+        baseOriginMap: OriginMap? = null,
+    ) = True2PatchMergeEngine.processVersion(
+        currentSrcDir, baseDir, patchedOutDir, currentSrcRelRoot, baseRelRoot, originMap, baseOriginMap
     )
+
+    // ---- Result writing ----
+
+    /**
+     * Applies a [MergeResult] to a file: writes content for MERGED/COPIED_*,
+     * deletes for DELETED, no-ops for SKIPPED.
+     */
+    fun writeResult(result: MergeResult, outFile: File) {
+        when (result.action) {
+            MergeAction.DELETED -> outFile.delete()
+            MergeAction.SKIPPED -> { /* no-op */ }
+            else -> {
+                outFile.parentFile?.mkdirs()
+                outFile.writeText(result.content!!, Charsets.UTF_8)
+            }
+        }
+    }
 
     // ---- virtual src -> true src ----
 

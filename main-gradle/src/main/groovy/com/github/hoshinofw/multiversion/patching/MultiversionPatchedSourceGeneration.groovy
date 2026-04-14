@@ -2,6 +2,9 @@ package com.github.hoshinofw.multiversion.patching
 
 import com.github.hoshinofw.multiversion.MultiversionModulesExtension
 import com.github.hoshinofw.multiversion.engine.MergeEngine
+import com.github.hoshinofw.multiversion.engine.OriginMap
+import com.github.hoshinofw.multiversion.engine.PathUtil
+import com.github.hoshinofw.multiversion.engine.VersionUtil
 import com.github.hoshinofw.multiversion.util.GeneralUtil
 import com.github.hoshinofw.multiversion.util.PatchingUtil
 import org.gradle.api.Project
@@ -84,7 +87,7 @@ class MultiversionPatchedSourceGeneration {
             verToProj[GeneralUtil.mcVersion(p)] = p
         }
 
-        List<String> versions = verToProj.keySet().toList().sort { a, b -> PatchingUtil.compareVer(a, b) }
+        List<String> versions = verToProj.keySet().toList().sort { a, b -> VersionUtil.compareVersions(a, b) }
 
         // Root-level shared source directory for this module (optional, skipped if absent).
         // For module 'common' this is common/src/main/java; for 'fabric' it is fabric/src/main/java, etc.
@@ -130,31 +133,32 @@ class MultiversionPatchedSourceGeneration {
             // Output: build/patchedSrc/_originMap.tsv
             // Format: <rel>\t<absoluteOriginPath>\n
             File mapFile = patchP.layout.buildDirectory.file("patchedSrc/_originMap.tsv").get().asFile
-            File mapTmp  = patchP.layout.buildDirectory.file("patchedSrc/_originMap.tsv.tmp").get().asFile
 
-            // Writer MUST be created inside task execution (doFirst), not at configuration time.
-            BufferedWriter mapOut = null
+            // Base origin map: the previous version's _originMap.tsv (null for the first patched version)
+            File baseMapFile = i >= 2
+                    ? verToProj[versions[i - 1]].layout.buildDirectory.file("patchedSrc/_originMap.tsv").get().asFile
+                    : null
+
+            // OriginMap MUST be created inside task execution (doFirst), not at configuration time.
+            OriginMap originMap = null
 
             def record = { File srcRoot, String rel ->
-                if (mapOut == null) return
+                if (originMap == null) return
                 String relNorm = rel.replace('\\','/')
                 def origin = root.projectDir.toPath()
                         .relativize(new File(srcRoot, rel).toPath())
                         .toString()
                         .replace('\\','/')
-                mapOut.write(relNorm)
-                mapOut.write('\t')
-                mapOut.write(origin)
-                mapOut.write('\n')
+                originMap.addFileEntry(relNorm, origin)
             }
 
             // Compute merge base dirs before tasks.register to avoid closure-capture-in-loop
             File mergeBaseDir = i == 1
                     ? verToProj[versions[0]].file("src/main/java")
                     : verToProj[versions[i - 1]].layout.buildDirectory.dir("patchedSrc/main/java").get().asFile
-            String mergeBaseRelRoot = root.projectDir.toPath().relativize(mergeBaseDir.toPath()).toString().replace('\\', '/')
+            String mergeBaseRelRoot = PathUtil.relativize(root.projectDir, mergeBaseDir)
             File mergeCurrentSrcDir = patchP.file("src/main/java")
-            String mergeCurrentRelRoot = root.projectDir.toPath().relativize(mergeCurrentSrcDir.toPath()).toString().replace('\\', '/')
+            String mergeCurrentRelRoot = PathUtil.relativize(root.projectDir, mergeCurrentSrcDir)
 
             // Pre-compute per-layer data at configuration time to avoid loop-variable capture
             // issues inside the doFirst closure.
@@ -195,9 +199,7 @@ class MultiversionPatchedSourceGeneration {
                     try {
                         outJavaDir.get().asFile.deleteDir()
 
-                        mapFile.parentFile.mkdirs()
-                        if (mapTmp.exists()) mapTmp.delete()
-                        mapOut = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(mapTmp, false), "UTF-8"))
+                        originMap = new OriginMap()
 
                         patchP.copy {
                             duplicatesStrategy = DuplicatesStrategy.INCLUDE
@@ -237,36 +239,24 @@ class MultiversionPatchedSourceGeneration {
 
                 t.doLast {
                     try {
-                        MergeEngine.versionUpdatePatchedSrc(mergeCurrentSrcDir, mergeBaseDir, outJavaDir.get().asFile, mergeCurrentRelRoot, mergeBaseRelRoot, mapOut)
+                        OriginMap baseOriginMap = (baseMapFile != null && baseMapFile.exists())
+                                ? OriginMap.fromFile(baseMapFile) : null
+                        MergeEngine.versionUpdatePatchedSrc(mergeCurrentSrcDir, mergeBaseDir, outJavaDir.get().asFile, mergeCurrentRelRoot, mergeBaseRelRoot, originMap, baseOriginMap)
                     } catch (Exception e) {
                         if (project.gradle.taskGraph.allTasks.any { it.name == "generateAllPatchedSrc" }) {
                             logger.warn("[patch-${moduleName}] patchedSrc merge failed for ${patchP.path} (sync will continue): ${e.message}")
                         } else {
                             throw e
                         }
-                    } finally {
-                        try {
-                            if (mapOut != null) {
-                                mapOut.flush()
-                                mapOut.close()
-                            }
-                        } finally {
-                            mapOut = null
-                        }
                     }
 
-                    if (!mapTmp.exists() || mapTmp.length() == 0L) {
-                        mapFile.parentFile.mkdirs()
-                        mapTmp.text = ""
+                    mapFile.parentFile.mkdirs()
+                    if (originMap != null) {
+                        originMap.toFileAtomic(mapFile)
+                    } else {
+                        mapFile.text = ""
                     }
-
-                    if (mapFile.exists()) mapFile.delete()
-                    if (mapTmp.exists()) {
-                        if (!mapTmp.renameTo(mapFile)) {
-                            mapFile.bytes = mapTmp.bytes
-                            mapTmp.delete()
-                        }
-                    }
+                    originMap = null
                 }
             }
 

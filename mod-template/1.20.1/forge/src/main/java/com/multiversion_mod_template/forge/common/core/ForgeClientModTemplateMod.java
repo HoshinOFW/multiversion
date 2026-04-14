@@ -7,7 +7,7 @@ import net.minecraftforge.fml.common.Mod;
 public class ForgeClientModTemplateMod {
 
     public static void init() {
-        ModTemplateMod.init();
+
     }
 
 }

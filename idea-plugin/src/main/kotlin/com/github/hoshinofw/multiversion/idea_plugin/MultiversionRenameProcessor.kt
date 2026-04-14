@@ -1,5 +1,6 @@
 package com.github.hoshinofw.multiversion.idea_plugin
 
+import com.github.hoshinofw.multiversion.engine.PathUtil
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.project.Project
 import com.intellij.psi.*
@@ -63,7 +64,7 @@ class MultiversionRenameProcessor : RenamePsiElementProcessor() {
             }
 
             // ── build/patchedSrc (all versions, including current) ───────────
-            val patchedFile    = otherRoot.findFileByRelativePath("build/patchedSrc/main/java/$relClassPath") ?: continue
+            val patchedFile    = otherRoot.findFileByRelativePath("${PathUtil.PATCHED_SRC_DIR}/${PathUtil.JAVA_SRC_SUBDIR}/$relClassPath") ?: continue
             val patchedPsiFile = psiManager.findFile(patchedFile) as? PsiJavaFile                            ?: continue
             addMatchingElements(element, newName, patchedPsiFile, elementClass, allRenames)
         }
@@ -95,9 +96,10 @@ class MultiversionRenameProcessor : RenamePsiElementProcessor() {
     }
 
     /**
-     * Extends the base reference search to also include [DeleteDescriptorReference]s embedded
-     * in @Delete* annotation string literals. IntelliJ's Java rename only searches IN_CODE
-     * contexts and never looks inside string literals, so we must do that explicitly.
+     * Extends the base reference search to also include [DescriptorReference]s embedded
+     * in descriptor annotation string literals (@DeleteMethodsAndFields, @ModifySignature).
+     * IntelliJ's Java rename only searches IN_CODE contexts and never looks inside string
+     * literals, so we must do that explicitly.
      */
     override fun findReferences(
         element: PsiElement,
@@ -123,30 +125,42 @@ class MultiversionRenameProcessor : RenamePsiElementProcessor() {
             val otherPsiFile = psiManager.findFile(otherFile) as? PsiJavaFile  ?: continue
 
             for (cls in otherPsiFile.classes) {
-                for (annotation in cls.annotations) {
-                    if (!isDeleteAnnotation(annotation.qualifiedName.orEmpty())) continue
-                    for (attr in annotation.parameterList.attributes) {
-                        val value = attr.value ?: continue
-                        val literals: List<PsiLiteralExpression> = when (value) {
-                            is PsiArrayInitializerMemberValue ->
-                                value.initializers.filterIsInstance<PsiLiteralExpression>()
-                            is PsiLiteralExpression -> listOf(value)
-                            else -> emptyList()
-                        }
-                        for (literal in literals) {
-                            val str = literal.value as? String ?: continue
-                            if (str != name && !str.startsWith("$name(")) continue
-                            literal.references
-                                .filterIsInstance<DeleteDescriptorReference>()
-                                .filter { element.manager.areElementsEquivalent(it.resolve(), element) }
-                                .forEach { refs.add(it) }
-                        }
-                    }
-                }
+                collectDescriptorRefs(cls.annotations.toList(), name, element, refs)
+                // Also scan member-level annotations (e.g. @ModifySignature on methods/fields)
+                for (method in cls.methods) collectDescriptorRefs(method.annotations.toList(), name, element, refs)
+                for (field in cls.fields) collectDescriptorRefs(field.annotations.toList(), name, element, refs)
             }
         }
 
         return refs
+    }
+
+    private fun collectDescriptorRefs(
+        annotations: List<PsiAnnotation>,
+        name: String,
+        element: PsiElement,
+        refs: MutableList<PsiReference>
+    ) {
+        for (annotation in annotations) {
+            if (!isDescriptorAnnotation(annotation.qualifiedName.orEmpty())) continue
+            for (attr in annotation.parameterList.attributes) {
+                val value = attr.value ?: continue
+                val literals: List<PsiLiteralExpression> = when (value) {
+                    is PsiArrayInitializerMemberValue ->
+                        value.initializers.filterIsInstance<PsiLiteralExpression>()
+                    is PsiLiteralExpression -> listOf(value)
+                    else -> emptyList()
+                }
+                for (literal in literals) {
+                    val str = literal.value as? String ?: continue
+                    if (str != name && !str.startsWith("$name(")) continue
+                    literal.references
+                        .filterIsInstance<DescriptorReference>()
+                        .filter { element.manager.areElementsEquivalent(it.resolve(), element) }
+                        .forEach { refs.add(it) }
+                }
+            }
+        }
     }
 
     /**
@@ -168,7 +182,7 @@ class MultiversionRenameProcessor : RenamePsiElementProcessor() {
 // ── VirtualFile helper ────────────────────────────────────────────────────────
 
 internal fun com.intellij.openapi.vfs.VirtualFile.inPatchedSrc(): Boolean =
-    path.contains("/build/patchedSrc/")
+    path.contains("/${PathUtil.PATCHED_SRC_DIR}/")
 
 // ── Custom rename dialog (adds the "Propagate to other versions" checkbox) ───
 

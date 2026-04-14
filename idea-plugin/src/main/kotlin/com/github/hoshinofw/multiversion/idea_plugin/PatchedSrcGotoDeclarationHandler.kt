@@ -1,5 +1,9 @@
 package com.github.hoshinofw.multiversion.idea_plugin
 
+import com.github.hoshinofw.multiversion.engine.MemberDescriptor
+import com.github.hoshinofw.multiversion.engine.OriginMap
+import com.github.hoshinofw.multiversion.engine.OriginResolver
+import com.github.hoshinofw.multiversion.engine.PathUtil
 import com.intellij.codeInsight.TargetElementUtil
 import com.intellij.codeInsight.navigation.actions.GotoDeclarationHandler
 import com.intellij.openapi.diagnostic.Logger
@@ -28,25 +32,21 @@ class PatchedSrcGotoDeclarationHandler : GotoDeclarationHandler {
 
         val cache = OriginMapCache.getInstance(project)
 
-        // Try method-level lookup first
+        // Member-level redirect (methods, fields)
         val memberKey = memberKey(navTarget)
         if (memberKey != null) {
             val entry = cache.mapMemberToOrigin(navFile, memberKey)
             if (entry != null) {
-                val resolved = resolveToLine(project, entry.file, entry.line)
+                val resolved = resolveToPosition(project, entry.file, entry.line, entry.col)
                 if (resolved != null) {
-                    LOG.info("patchedSrc method redirect: ${navFile.path}#${memberKey} -> ${entry.file.path}:${entry.line}")
+                    LOG.info("patchedSrc member redirect: ${navFile.path}#${memberKey} -> ${entry.file.path}:${entry.line}")
                     return arrayOf(resolved)
                 }
             }
         }
 
-        // Fall back to file-level
-        val originVf = cache.mapToOrigin(navFile) ?: run {
-            LOG.warn("In patchedSrc but could not resolve origin: ${navFile.path}")
-            return null
-        }
-
+        // File-level redirect (imports, class declarations, etc.)
+        val originVf = cache.mapToOrigin(navFile) ?: return null
         val originPsi = PsiManager.getInstance(project).findFile(originVf) ?: return null
         val remapped = remapByPosition(project, navTarget, originPsi).navigationElement
         LOG.info("patchedSrc file redirect: ${navFile.path} -> ${originVf.path}")
@@ -58,27 +58,25 @@ class PatchedSrcGotoDeclarationHandler : GotoDeclarationHandler {
     private fun memberKey(element: PsiElement): String? {
         val method = PsiTreeUtil.getParentOfType(element, PsiMethod::class.java, false)
         if (method != null) {
-            val params = method.parameterList.parameters.joinToString(",") { simpleTypeName(it.type.presentableText) }
-            return "${method.name}(${params})"
+            val params = method.parameterList.parameters.joinToString(",") { MemberDescriptor.simpleTypeName(it.type.presentableText) }
+            return if (method.isConstructor) "<init>(${params})" else "${method.name}(${params})"
         }
         val field = PsiTreeUtil.getParentOfType(element, PsiField::class.java, false)
         if (field != null) return field.name
         return null
     }
 
-    private fun simpleTypeName(type: String): String {
-        val base = type.replace("[]", "").replace("...", "").trim()
-        val dot = base.lastIndexOf('.')
-        return if (dot >= 0) base.substring(dot + 1) else base
-    }
-
-    private fun resolveToLine(project: Project, file: VirtualFile, line: Int): PsiElement? {
+    private fun resolveToPosition(project: Project, file: VirtualFile, line: Int, col: Int): PsiElement? {
         val psiFile = PsiManager.getInstance(project).findFile(file) ?: return null
         if (line <= 0) return psiFile
         val doc = com.intellij.psi.PsiDocumentManager.getInstance(project).getDocument(psiFile) ?: return psiFile
         val zeroLine = (line - 1).coerceIn(0, doc.lineCount - 1)
         val lineStart = doc.getLineStartOffset(zeroLine)
-        return psiFile.findElementAt(lineStart) ?: psiFile
+        val offset = if (col > 0) {
+            val lineEnd = doc.getLineEndOffset(zeroLine)
+            (lineStart + col - 1).coerceAtMost(lineEnd)
+        } else lineStart
+        return psiFile.findElementAt(offset) ?: psiFile
     }
 
     private fun remapByPosition(project: Project, patchedTarget: PsiElement, originPsiFile: PsiFile): PsiElement {
@@ -103,10 +101,10 @@ class PatchedSrcGotoDeclarationHandler : GotoDeclarationHandler {
         return originPsiFile
     }
 
-    private fun VirtualFile.isInPatchedSrc() = path.replace('\\', '/').contains("/build/patchedSrc/")
+    private fun VirtualFile.isInPatchedSrc() = path.replace('\\', '/').contains("/${PathUtil.PATCHED_SRC_DIR}/")
 }
 
-data class OriginEntry(val file: VirtualFile, val line: Int)
+data class OriginEntry(val file: VirtualFile, val line: Int, val col: Int)
 
 class OriginMapCache(private val project: Project) {
 
@@ -116,44 +114,50 @@ class OriginMapCache(private val project: Project) {
             INSTANCES.computeIfAbsent(project.locationHash) { OriginMapCache(project) }
     }
 
-    private data class CacheEntry(val mappingFile: File, var lastModified: Long, var map: Map<String, String>)
+    private data class CacheEntry(val mappingFile: File, var lastModified: Long, var map: OriginMap)
     private val cache = ConcurrentHashMap<String, CacheEntry>()
 
-    fun mapMemberToOrigin(patchedFile: VirtualFile, memberKey: String): OriginEntry? {
-        val normPath = patchedFile.path.replace('\\', '/')
-        val patchedRoot = patchedRoot(normPath) ?: return null
-        val rel = relInsidePatchedSrc(normPath, patchedRoot) ?: return null
-        val relKey = rel.removePrefix("main/java/").removePrefix("main/resources/")
+    private data class ResolverContext(
+        val relKey: String,
+        val patchedRoot: String,
+        val resolver: OriginResolver,
+    )
 
-        val entry = loadedEntry(patchedRoot) ?: return null
-        val raw = entry.map["${relKey}#${memberKey}"] ?: return null
-        return parseOriginEntry(raw, patchedRoot)
+    fun mapMemberToOrigin(patchedFile: VirtualFile, memberKey: String): OriginEntry? {
+        val ctx = prepareContext(patchedFile) ?: return null
+        val resolved = ctx.resolver.resolveMember(ctx.relKey, memberKey)
+        val vf = resolveRelative(resolved.originPath, ctx.patchedRoot) ?: return null
+        return OriginEntry(vf, resolved.line, resolved.col)
     }
 
     fun mapToOrigin(patchedFile: VirtualFile): VirtualFile? {
+        val ctx = prepareContext(patchedFile) ?: return null
+        val resolved = ctx.resolver.resolveFile(ctx.relKey)
+        return resolveRelative(resolved.originPath, ctx.patchedRoot)
+    }
+
+    private fun prepareContext(patchedFile: VirtualFile): ResolverContext? {
         val normPath = patchedFile.path.replace('\\', '/')
         val patchedRoot = patchedRoot(normPath) ?: return null
         val rel = relInsidePatchedSrc(normPath, patchedRoot) ?: return null
-        val relKey = rel.removePrefix("main/java/").removePrefix("main/resources/")
+        val relKey = rel.removePrefix("${PathUtil.JAVA_SRC_SUBDIR}/")
+                        .removePrefix("${PathUtil.RESOURCES_SRC_SUBDIR}/")
 
         val entry = loadedEntry(patchedRoot) ?: return null
-        val originRel = entry.map[relKey] ?: return null
-        return resolveRelative(originRel.substringBeforeLast(":"), patchedRoot)
-    }
 
-    private fun parseOriginEntry(raw: String, patchedRoot: String): OriginEntry? {
-        val colonIdx = raw.lastIndexOf(':')
-        val line = if (colonIdx >= 0) raw.substring(colonIdx + 1).toIntOrNull() ?: 0 else 0
-        val pathPart = if (colonIdx >= 0) raw.substring(0, colonIdx) else raw
-        val vf = resolveRelative(pathPart, patchedRoot) ?: return null
-        return OriginEntry(vf, line)
+        val moduleRootPath = patchedRoot.substringBeforeLast("/${PathUtil.PATCHED_SRC_DIR}")
+        val moduleRootVf = LocalFileSystem.getInstance().findFileByPath(moduleRootPath)
+        val config = moduleRootVf?.let { EngineConfigCache.forModuleRoot(it) }
+
+        val resolver = OriginResolver(entry.map, config?.baseRelRoot ?: "")
+        return ResolverContext(relKey, patchedRoot, resolver)
     }
 
     private fun resolveRelative(originRel: String, patchedRoot: String): VirtualFile? {
         val lfs = LocalFileSystem.getInstance()
         if (File(originRel).isAbsolute) return lfs.findFileByIoFile(File(originRel))
 
-        val moduleRootPath = patchedRoot.substringBeforeLast("/build/patchedSrc")
+        val moduleRootPath = patchedRoot.substringBeforeLast("/${PathUtil.PATCHED_SRC_DIR}")
         val moduleRoot = File(moduleRootPath)
         val versionDir = moduleRoot.parentFile
         val multiVersionRoot = versionDir?.parentFile
@@ -172,37 +176,23 @@ class OriginMapCache(private val project: Project) {
 
     private fun loadedEntry(patchedRoot: String): CacheEntry? =
         cache.compute(patchedRoot) { _, existing ->
-            val mappingFile = File("$patchedRoot/_originMap.tsv")
+            val mappingFile = File("$patchedRoot/${PathUtil.ORIGIN_MAP_FILENAME}")
             if (!mappingFile.exists()) return@compute null
             val lastMod = mappingFile.lastModified()
             if (existing == null || existing.lastModified != lastMod)
-                CacheEntry(mappingFile, lastMod, loadTsv(mappingFile))
+                CacheEntry(mappingFile, lastMod, OriginMap.fromFile(mappingFile))
             else existing
         }
 
     private fun patchedRoot(path: String): String? {
-        val idx = path.indexOf("/build/patchedSrc/")
+        val marker = "/${PathUtil.PATCHED_SRC_DIR}/"
+        val idx = path.indexOf(marker)
         if (idx < 0) return null
-        return path.substring(0, idx) + "/build/patchedSrc"
+        return path.substring(0, idx) + "/${PathUtil.PATCHED_SRC_DIR}"
     }
 
     private fun relInsidePatchedSrc(path: String, patchedRoot: String): String? {
         val prefix = patchedRoot.trimEnd('/') + "/"
         return if (path.startsWith(prefix)) path.removePrefix(prefix) else null
-    }
-
-    private fun loadTsv(file: File): Map<String, String> {
-        val out = HashMap<String, String>(4096)
-        file.forEachLine { line ->
-            val t = line.trim()
-            if (t.isEmpty() || t.startsWith("#")) return@forEachLine
-            val parts = t.split('\t')
-            if (parts.size >= 2) {
-                val k = parts[0].replace('\\', '/').trim()
-                val v = parts[1].replace('\\', '/').trim()
-                if (k.isNotEmpty() && v.isNotEmpty()) out[k] = v
-            }
-        }
-        return out
     }
 }

@@ -12,13 +12,13 @@
         <daemon.highlightInfoFilter implementation="com.github.hoshinofw.multiversion.idea_plugin.OverwriteDuplicateClassHighlightFilter"/>
         <daemon.highlightInfoFilter implementation="com.github.hoshinofw.multiversion.idea_plugin.ShadowVersionHighlightFilter"/>
         <gotoDeclarationHandler implementation="com.github.hoshinofw.multiversion.idea_plugin.PatchedSrcGotoDeclarationHandler"/>
-        <psi.referenceContributor language="JAVA" implementation="com.github.hoshinofw.multiversion.idea_plugin.DeleteDescriptorReferenceContributor"/>
+        <psi.referenceContributor language="JAVA" implementation="com.github.hoshinofw.multiversion.idea_plugin.DescriptorReferenceContributor"/>
         <localInspection language="JAVA"
-                         displayName="@Delete descriptor validation"
+                         displayName="Descriptor annotation validation"
                          groupName="Multiversion"
                          enabledByDefault="true"
                          level="ERROR"
-                         implementationClass="com.github.hoshinofw.multiversion.idea_plugin.DeleteAnnotationInspection"/>
+                         implementationClass="com.github.hoshinofw.multiversion.idea_plugin.DescriptorAnnotationInspection"/>
         <applicationService serviceImplementation="com.github.hoshinofw.multiversion.idea_plugin.MultiversionSettings"/>
         <applicationConfigurable parentId="tools"
                                  instance="com.github.hoshinofw.multiversion.idea_plugin.MultiversionConfigurable"
@@ -26,11 +26,17 @@
                                  displayName="Multiversion"/>
         <renamePsiElementProcessor implementation="com.github.hoshinofw.multiversion.idea_plugin.MultiversionRenameProcessor"
                                    order="first"/>
+        <findUsagesHandlerFactory implementation="com.github.hoshinofw.multiversion.idea_plugin.PatchedSrcFindUsagesHandlerFactory"
+                                   language="JAVA"/>
+        <postStartupActivity implementation="com.github.hoshinofw.multiversion.idea_plugin.MultiversionProjectStartup"/>
     </extensions>
 
-    <projectListeners>
+    <applicationListeners>
         <listener class="com.github.hoshinofw.multiversion.idea_plugin.MultiversionOnSaveListener"
                   topic="com.intellij.openapi.fileEditor.FileDocumentManagerListener"/>
+    </applicationListeners>
+
+    <projectListeners>
         <listener class="com.github.hoshinofw.multiversion.idea_plugin.PatchedSrcEditorRedirectListener"
                   topic="com.intellij.openapi.fileEditor.FileEditorManagerListener"/>
         <listener class="com.github.hoshinofw.multiversion.idea_plugin.MultiversionMoveListener"

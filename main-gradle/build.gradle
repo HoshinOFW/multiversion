@@ -6,11 +6,16 @@ plugins {
 
 base {
     group = "com.github.hoshinofw.multiversion"
-    version = "0.5.1"
+    version = "0.5.4"
 }
 
-def annotationsVersion  = findProperty("multiversion_annotations_version") ?: version
-def mergeEngineVersion  = findProperty("merge_engine_version")             ?: version
+def engineProps = new Properties()
+engineProps.load(file("../merge-engine/gradle.properties").newInputStream())
+def annotationsProps = new Properties()
+annotationsProps.load(file("../annotations/gradle.properties").newInputStream())
+
+def annotationsVersion  = annotationsProps['annotations_package_version']
+def mergeEngineVersion  = engineProps['merge_engine_version']
 
 def generatedConstantsDir = layout.buildDirectory.dir("generated/sources/plugin-constants/groovy/main")
 
