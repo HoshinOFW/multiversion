@@ -7,9 +7,6 @@
 - Test rename refactor for constructors.
 
 ### Engine + Annotations:
-- Unify everything under the engine.
-  - ATM the IDE has to resolve old member references. The engine should own the methods for this.
-  - Check everything else that the engine should own/.
 - Add support for inner classes.
 - Add support for records.
 - Add enum constants to refactoring support.

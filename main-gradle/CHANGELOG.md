@@ -7,6 +7,7 @@
 - Removed dead methods from `PatchingUtil` (`normalizeResourceDeleteEntries`, `applyResourceDeletes`)
 - Version detection now delegates to engine's `VersionUtil.looksLikeVersion()` instead of inline regexes
 - Deleted dead `CollectionUtil.compareMcVersions()` and all its private helpers
+- Publishing to CurseForge and Modrinth is now independent: omit `curseforge_id` or `modrinth_id` to skip that platform
 
 ## 0.5.4
 

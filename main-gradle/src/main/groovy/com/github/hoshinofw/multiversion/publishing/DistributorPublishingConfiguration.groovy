@@ -9,12 +9,8 @@ class DistributorPublishingConfiguration {
 
     private static final List<String> requiredProperties = [
             "release_channel",
-            "curseforge_id",
-            "modrinth_id",
             "mod_client",
             "mod_server",
-            "curseforge_dependencies",
-            "modrinth_dependencies",
     ]
 
     static void configure(Project root) {
@@ -23,23 +19,35 @@ class DistributorPublishingConfiguration {
         try {
             GeneralUtil.ensureRootProperties(root, requiredProperties)
         } catch (Exception ignored) {
-            root.print("PUBLISHING DISABLED: Missing properties in root. To enable publishing, provide all the following: $requiredProperties")
-            //root.logger.info("PUBLISHING DISABLED: Missing properties in root. To enable publishing, provide all the following: $requiredProperties")
+            root.logger.lifecycle("PUBLISHING DISABLED: Missing properties in root. To enable publishing, provide all the following: $requiredProperties")
             cancel = true
         }
         if (cancel) return
+
+        def curseforgeId = root.findProperty("curseforge_id")?.toString()?.trim() ?: null
+        def modrinthId = root.findProperty("modrinth_id")?.toString()?.trim() ?: null
+        boolean hasCurseforge = curseforgeId != null && !curseforgeId.isEmpty()
+        boolean hasModrinth = modrinthId != null && !modrinthId.isEmpty()
+
+        if (!hasCurseforge && !hasModrinth) {
+            root.logger.lifecycle("PUBLISHING DISABLED: Neither curseforge_id nor modrinth_id is set. Provide at least one to enable publishing.")
+            return
+        }
+
+        if (!hasCurseforge) root.logger.lifecycle("CurseForge publishing skipped: curseforge_id not set.")
+        if (!hasModrinth) root.logger.lifecycle("Modrinth publishing skipped: modrinth_id not set.")
 
         boolean ungated = root.gradle.startParameter.taskNames.any { it.endsWith("publishAllMods") }
 
         root.tasks.register("publishAllSafe") {
             group = "distribution"
-            description = "Publishes ALL collected jars to CurseForge + Modrinth (requires -PPUBLISH_RELEASE=true)."
+            description = "Publishes collected jars to configured platforms (requires -PPUBLISH_RELEASE=true)."
             dependsOn("publishMods")
         }
 
         root.tasks.register("publishAllMods") {
             group = "distribution"
-            description = "Publishes ALL collected jars to CurseForge + Modrinth without a release gate."
+            description = "Publishes collected jars to configured platforms without a release gate."
             dependsOn("publishMods")
         }
 
@@ -55,22 +63,31 @@ class DistributorPublishingConfiguration {
             def channel = root.findProperty("release_channel")
             type = (channel == "alpha") ? ALPHA : (channel == "beta") ? BETA : STABLE
 
-            def curseToken = root.providers.environmentVariable("CURSEFORGE_TOKEN")
-            def modrinthToken = root.providers.environmentVariable("MODRINTH_TOKEN")
+            def cf = null
+            if (hasCurseforge) {
+                def curseToken = root.providers.environmentVariable("CURSEFORGE_TOKEN")
+                def curseDeps = root.findProperty("curseforge_dependencies")?.toString() ?: ""
+                cf = curseforgeOptions {
+                    accessToken = curseToken
+                    projectId = curseforgeId
 
-            def cf = curseforgeOptions {
-                accessToken = curseToken
-                projectId = root.findProperty("curseforge_id")
+                    clientRequired = root.findProperty("mod_client") == "true"
+                    serverRequired = root.findProperty("mod_server") == "true"
 
-                clientRequired = root.findProperty("mod_client") == "true"
-                serverRequired = root.findProperty("mod_server") == "true"
-
-                requires(root.findProperty("curseforge_dependencies").toString().split(","))
+                    if (!curseDeps.isEmpty()) requires(curseDeps.split(","))
+                }
             }
-            def mr = modrinthOptions {
-                accessToken = modrinthToken
-                projectId = root.findProperty("modrinth_id").toString()
-                requires(root.findProperty("modrinth_dependencies").toString().split(","))
+
+            def mr = null
+            if (hasModrinth) {
+                def modrinthToken = root.providers.environmentVariable("MODRINTH_TOKEN")
+                def modrinthDeps = root.findProperty("modrinth_dependencies")?.toString() ?: ""
+                mr = modrinthOptions {
+                    accessToken = modrinthToken
+                    projectId = modrinthId
+
+                    if (!modrinthDeps.isEmpty()) requires(modrinthDeps.split(","))
+                }
             }
 
             def baseDir = root.layout.projectDirectory.dir("builds/${mod_version}").asFile
@@ -81,8 +98,6 @@ class DistributorPublishingConfiguration {
 
             def allowedLoaders = ["fabric", "forge", "neoforge"] as Set
 
-
-            //Discovery
             baseDir.listFiles()
                     ?.findAll { it.directory && GeneralUtil.looksLikeMcVersion(it.name) }
                     ?.sort { a, b -> a.name <=> b.name }
@@ -116,19 +131,22 @@ class DistributorPublishingConfiguration {
                                         modLoaders.add(loader)
                                     }
 
-
-                                    curseforge("curseforge_${name}") {
-                                        from(cf, pub)
-                                        changelogType = "markdown"
-                                        version = versionNumber
-                                        minecraftVersions.add(mc)
-                                        javaVersions.add(javaVersion)
+                                    if (hasCurseforge) {
+                                        curseforge("curseforge_${name}") {
+                                            from(cf, pub)
+                                            changelogType = "markdown"
+                                            version = versionNumber
+                                            minecraftVersions.add(mc)
+                                            javaVersions.add(javaVersion)
+                                        }
                                     }
 
-                                    modrinth("modrinth_${name}") {
-                                        from(mr, pub)
-                                        version = versionNumber
-                                        minecraftVersions.add(mc)
+                                    if (hasModrinth) {
+                                        modrinth("modrinth_${name}") {
+                                            from(mr, pub)
+                                            version = versionNumber
+                                            minecraftVersions.add(mc)
+                                        }
                                     }
                                 }
                     }

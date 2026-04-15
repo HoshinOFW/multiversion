@@ -398,32 +398,32 @@ Properties shared across all versions (`mod_id`, `mod_name`, `mod_version`, `arc
 
 ### Publishing
 
-The Gradle plugin can publish all built mod JARs to CurseForge and Modrinth in one task. Publishing is opt-in. If the required properties are absent, the plugin skips configuration entirely and nothing breaks.
+The Gradle plugin can publish built mod JARs to CurseForge and/or Modrinth in one task. Publishing is opt-in and per-platform: provide `curseforge_id` to publish to CurseForge, `modrinth_id` to publish to Modrinth, or both. If neither ID is set, publishing is disabled entirely. If only one is set, only that platform is configured.
 
 #### `gradle.properties`
 
 These go in the root `gradle.properties`:
 
-| Property | Description |
-|---|---|
-| `mod_name` | Display name of the mod |
-| `mod_version` | Version string, e.g. `1.0.0` |
-| `release_channel` | One of `alpha`, `beta`, or `stable` |
-| `mod_client` | `true` or `false` |
-| `mod_server` | `true` or `false` |
-| `curseforge_id` | Numeric project ID from the CurseForge project page |
-| `modrinth_id` | Project slug or ID from Modrinth |
-| `curseforge_dependencies` | Comma-separated CurseForge project IDs for required dependencies |
-| `modrinth_dependencies` | Comma-separated Modrinth slugs for required dependencies |
+| Property | Required | Description |
+|---|---|---|
+| `mod_name` | Yes | Display name of the mod |
+| `mod_version` | Yes | Version string, e.g. `1.0.0` |
+| `release_channel` | Yes | One of `alpha`, `beta`, or `stable` |
+| `mod_client` | Yes | `true` or `false` |
+| `mod_server` | Yes | `true` or `false` |
+| `curseforge_id` | No | Numeric project ID from CurseForge. Omit to skip CurseForge publishing. |
+| `modrinth_id` | No | Project slug or ID from Modrinth. Omit to skip Modrinth publishing. |
+| `curseforge_dependencies` | No | Comma-separated CurseForge project IDs for required dependencies |
+| `modrinth_dependencies` | No | Comma-separated Modrinth slugs for required dependencies |
 
-Leave `curseforge_dependencies` or `modrinth_dependencies` empty if there are none.
+At least one of `curseforge_id` or `modrinth_id` must be set for publishing to be enabled. Leave dependency properties empty or omit them if there are none.
 
 #### Environment variables
 
 | Variable | Description |
 |---|---|
-| `CURSEFORGE_TOKEN` | CurseForge API token |
-| `MODRINTH_TOKEN` | Modrinth API token |
+| `CURSEFORGE_TOKEN` | CurseForge API token (only needed if `curseforge_id` is set) |
+| `MODRINTH_TOKEN` | Modrinth API token (only needed if `modrinth_id` is set) |
 
 These are read at publish time. They are never required for building.
 
@@ -439,7 +439,7 @@ Two publish tasks are available:
 ./gradlew publishAllMods
 ```
 
-`publishAllMods` builds, collects, and publishes all mod JARs to CurseForge and Modrinth in one step. It automatically runs `collectBuildsAll` before publishing.
+`publishAllMods` builds, collects, and publishes all mod JARs to configured platforms in one step. It automatically runs `collectBuildsAll` before publishing.
 
 ```bash
 ./gradlew publishAllSafe
