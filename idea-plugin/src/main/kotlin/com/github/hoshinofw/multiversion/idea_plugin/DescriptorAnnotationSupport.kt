@@ -1,5 +1,6 @@
 package com.github.hoshinofw.multiversion.idea_plugin
 
+import com.github.hoshinofw.multiversion.engine.InitTarget
 import com.github.hoshinofw.multiversion.engine.MemberDescriptor
 import com.github.hoshinofw.multiversion.engine.PathUtil
 import com.github.hoshinofw.multiversion.engine.VersionUtil
@@ -85,54 +86,34 @@ class DescriptorAnnotationInspection : LocalInspectionTool() {
  * Handles all ambiguity cases for "init" (constructor vs method vs field).
  */
 private fun validateDescriptor(descriptor: String, targetClass: PsiClass, sourceClass: PsiClass): String? {
-    val name = descriptor.substringBefore("(")
-    val hasParams = descriptor.contains("(")
+    val parsed = MemberDescriptor.parseDescriptor(descriptor)
 
-    if (name == "init") {
+    if (parsed.name == "init") {
         val ctors = targetClass.constructors
         val methods = targetClass.findMethodsByName("init", false)
         val field = targetClass.findFieldByName("init", false)
 
-        // "init" without params
-        if (!hasParams) {
-            // Field named "init" is always illegal in descriptors due to constructor ambiguity
-            if (field != null)
-                return "Cannot reference field 'init': ambiguous with constructor"
+        val ctorMatch = if (parsed.params != null) ctors.find { psiParamsMatch(it, parsed.params!!) } else null
+        val methodMatch = if (parsed.params != null) methods.find { psiParamsMatch(it, parsed.params!!) } else null
 
-            val candidates = ctors.size + methods.size
-            if (candidates == 0)
-                return "'init' member reference could not be resolved in ${sourceClass.name}"
-            if (candidates == 1) return null // unambiguous
-            // Multiple candidates: could be multiple ctors, multiple methods, or mix
-            if (ctors.isNotEmpty() && methods.isNotEmpty())
-                return "Ambiguous reference: 'init' could reference the constructor or the method. Provide full descriptor with parameter types"
-            return "'init' is ambiguous: $candidates overloads exist, specify parameter types"
-        }
-
-        // "init(...)" with params
-        val paramStr = descriptor.substringAfter("(").substringBeforeLast(")")
-        val expectedParams = if (paramStr.isBlank()) emptyList()
-        else paramStr.split(",").map { MemberDescriptor.simpleTypeName(it.trim()) }
-
-        val ctorMatch = ctors.find { matchesParams(it, expectedParams) }
-        val methodMatch = methods.find { matchesParams(it, expectedParams) }
-
-        if (ctorMatch != null && methodMatch != null)
-            return "Ambiguous reference: constructor and method 'init' have the same signature. Cannot resolve"
-        if (ctorMatch != null || methodMatch != null) return null
-        return "'$descriptor' member reference could not be resolved in ${sourceClass.name}"
+        val resolution = MemberDescriptor.resolveInitAmbiguity(
+            ctorCount = ctors.size, methodCount = methods.size, fieldExists = field != null,
+            hasParams = parsed.params != null, ctorMatched = ctorMatch != null, methodMatched = methodMatch != null,
+        )
+        if (resolution.error != null) return resolution.error
+        return null
     }
 
     // Non-"init" descriptors
-    if (!hasParams) {
-        val methods = targetClass.findMethodsByName(name, false)
+    if (parsed.params == null) {
+        val methods = targetClass.findMethodsByName(parsed.name, false)
         if (methods.size == 1) return null
         if (methods.isEmpty()) {
-            val field = targetClass.findFieldByName(name, false)
+            val field = targetClass.findFieldByName(parsed.name, false)
             return if (field != null) null
-            else "'$name' member reference could not be resolved in ${sourceClass.name}"
+            else "'${parsed.name}' member reference could not be resolved in ${sourceClass.name}"
         }
-        return "'$name' is ambiguous: ${methods.size} overloads exist, specify parameter types"
+        return "'${parsed.name}' is ambiguous: ${methods.size} overloads exist, specify parameter types"
     }
 
     val resolved = resolveDescriptorInClass(descriptor, targetClass)
@@ -140,13 +121,8 @@ private fun validateDescriptor(descriptor: String, targetClass: PsiClass, source
     else "'$descriptor' member reference could not be resolved in ${sourceClass.name}"
 }
 
-private fun matchesParams(method: PsiMethod, expectedParams: List<String>): Boolean {
-    val params = method.parameterList.parameters
-    if (params.size != expectedParams.size) return false
-    return params.zip(expectedParams).all { (p, expected) ->
-        MemberDescriptor.simpleTypeName(p.type.presentableText) == expected
-    }
-}
+private fun psiParamsMatch(method: PsiMethod, expectedParams: List<String>): Boolean =
+    MemberDescriptor.matchesParams(method.parameterList.parameters.map { it.type.presentableText }, expectedParams)
 
 // -- Shared helpers --
 
@@ -195,46 +171,36 @@ fun findPreviousVersionClass(psiClass: PsiClass): PsiClass? {
 }
 
 fun resolveDescriptorInClass(descriptor: String, cls: PsiClass): PsiElement? {
-    val name = descriptor.substringBefore("(")
-    val hasParams = descriptor.contains("(")
+    val parsed = MemberDescriptor.parseDescriptor(descriptor)
 
-    // "init" can refer to constructors OR a method literally named "init".
-    // Try constructors first; if no match, fall through to the normal method/field lookup.
-    if (name == "init") {
+    if (parsed.name == "init") {
         val ctors = cls.constructors
-        if (!hasParams && ctors.size == 1) return ctors[0]
-        if (hasParams) {
-            val paramStr = descriptor.substringAfter("(").substringBeforeLast(")")
-            val expectedParams = if (paramStr.isBlank()) emptyList()
-            else paramStr.split(",").map { MemberDescriptor.simpleTypeName(it.trim()) }
-            val match = ctors.find { ctor ->
-                val params = ctor.parameterList.parameters
-                params.size == expectedParams.size && params.zip(expectedParams).all { (p, expected) ->
-                    MemberDescriptor.simpleTypeName(p.type.presentableText) == expected
-                }
-            }
-            if (match != null) return match
+        val methods = cls.findMethodsByName("init", false)
+        val field = cls.findFieldByName("init", false)
+
+        val ctorMatch = if (parsed.params != null) ctors.find { psiParamsMatch(it, parsed.params!!) } else null
+        val methodMatch = if (parsed.params != null) methods.find { psiParamsMatch(it, parsed.params!!) } else null
+
+        val resolution = MemberDescriptor.resolveInitAmbiguity(
+            ctorCount = ctors.size, methodCount = methods.size, fieldExists = field != null,
+            hasParams = parsed.params != null, ctorMatched = ctorMatch != null, methodMatched = methodMatch != null,
+        )
+        if (resolution.error != null) return null
+        return when (resolution.target) {
+            InitTarget.CONSTRUCTOR -> ctorMatch ?: ctors.firstOrNull()
+            InitTarget.METHOD -> methodMatch ?: methods.firstOrNull()
+            else -> null
         }
-        // Fall through: "init" might be a regular method name
     }
 
-    if (!hasParams) {
-        val methods = cls.findMethodsByName(name, false)
+    if (parsed.params == null) {
+        val methods = cls.findMethodsByName(parsed.name, false)
         if (methods.size == 1) return methods[0]
-        if (methods.isEmpty()) return cls.findFieldByName(name, false)
+        if (methods.isEmpty()) return cls.findFieldByName(parsed.name, false)
         return null // ambiguous
     }
 
-    val paramStr = descriptor.substringAfter("(").substringBeforeLast(")")
-    val expectedParams = if (paramStr.isBlank()) emptyList()
-    else paramStr.split(",").map { MemberDescriptor.simpleTypeName(it.trim()) }
-
-    return cls.findMethodsByName(name, false).find { method ->
-        val params = method.parameterList.parameters
-        params.size == expectedParams.size && params.zip(expectedParams).all { (p, expected) ->
-            MemberDescriptor.simpleTypeName(p.type.presentableText) == expected
-        }
-    }
+    return cls.findMethodsByName(parsed.name, false).find { psiParamsMatch(it, parsed.params!!) }
 }
 
 private fun PsiAnnotation.owner(): PsiClass? {

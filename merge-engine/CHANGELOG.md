@@ -1,5 +1,10 @@
 # Merge Engine Changelog
 
+## 0.2.8
+
+- Added shared descriptor resolution utilities to `MemberDescriptor`: `parseDescriptor()`, `resolveInitAmbiguity()`, `matchesParams()`
+- Both engine and IDE now use these shared functions instead of independent implementations
+
 ## 0.2.7
 
 - Added `CachedOriginMap` for file-modification-aware caching of origin maps

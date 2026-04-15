@@ -216,7 +216,7 @@ internal object True2PatchMergeEngine {
 
             val desc = descriptor(method)
             val mParams = method.parameters.map { MemberDescriptor.simpleTypeName(it.typeAsString) }
-            val inBase = baseCls.methods.any { it.nameAsString == method.nameAsString && paramsMatch(it, mParams) }
+            val inBase = baseCls.methods.any { it.nameAsString == method.nameAsString && callableParamsMatch(it, mParams) }
 
             if (method.getAnnotationByName("ShadowVersion").isPresent) {
                 if (!inBase) throw MergeException("@ShadowVersion: '$desc' not found in base for $rel")
@@ -287,7 +287,7 @@ internal object True2PatchMergeEngine {
 
             val desc = constructorDescriptor(ctor)
             val mParams = ctor.parameters.map { MemberDescriptor.simpleTypeName(it.typeAsString) }
-            val inBase = getTypeConstructors(baseCls).any { paramsMatch(it, mParams) }
+            val inBase = getTypeConstructors(baseCls).any { callableParamsMatch(it, mParams) }
 
             if (ctor.getAnnotationByName("ShadowVersion").isPresent) {
                 if (!inBase) throw MergeException("@ShadowVersion: constructor '$desc' not found in base for $rel")
@@ -503,7 +503,7 @@ internal object True2PatchMergeEngine {
             if (name == "init") {
                 val ctors = getTypeConstructors(baseCls)
                 if (ctors.isEmpty()) throw MergeException("@Delete: no constructors found in base for $rel")
-                val params = if (desc.contains("(")) parseParamTypes(desc) else null
+                val params = MemberDescriptor.parseDescriptor(desc).params
                 if (params == null && ctors.size > 1)
                     throw MergeException("@Delete: 'init' in $rel has ${ctors.size} constructors; add parameter types to disambiguate")
                 (findByParams(ctors, params ?: emptyList(), "init", rel) as ConstructorDeclaration).remove()
@@ -519,7 +519,7 @@ internal object True2PatchMergeEngine {
             val annMember = getAnnotationMembers(baseCls).find { it.nameAsString == name }
             if (annMember != null) { annMember.remove(); continue }
 
-            val params = if (desc.contains("(")) parseParamTypes(desc) else null
+            val params = MemberDescriptor.parseDescriptor(desc).params
             val overloads = baseCls.methods.filter { it.nameAsString == name }
             if (overloads.isEmpty()) throw MergeException("@Delete: '$name' not found in base for $rel")
             if (params == null && overloads.size > 1)
@@ -544,8 +544,9 @@ internal object True2PatchMergeEngine {
             val ann = method.getAnnotationByName("ModifySignature").get()
             val targetDesc = extractSingleStringValue(ann)
                 ?: throw MergeException("@ModifySignature on '${method.nameAsString}' must have a string value in $rel")
-            val targetName = if (targetDesc.contains("(")) targetDesc.substringBefore("(") else targetDesc
-            val targetParams = if (targetDesc.contains("(")) parseParamTypes(targetDesc) else null
+            val parsed = MemberDescriptor.parseDescriptor(targetDesc)
+            val targetName = parsed.name
+            val targetParams = parsed.params
 
             val baseTarget = resolveMethodOrField(baseCls, targetName, targetParams, rel, "@ModifySignature")
             val hasOverwrite = method.getAnnotationByName("OverwriteVersion").isPresent
@@ -599,7 +600,7 @@ internal object True2PatchMergeEngine {
             val ann = ctor.getAnnotationByName("ModifySignature").get()
             val targetDesc = extractSingleStringValue(ann)
                 ?: throw MergeException("@ModifySignature on constructor must have a string value in $rel")
-            val targetParams = if (targetDesc.contains("(")) parseParamTypes(targetDesc) else null
+            val targetParams = MemberDescriptor.parseDescriptor(targetDesc).params
 
             val baseCtors = getTypeConstructors(baseCls)
             val baseTarget = if (targetParams != null) {
@@ -642,30 +643,24 @@ internal object True2PatchMergeEngine {
         rel: String,
         annName: String,
     ): com.github.javaparser.ast.body.BodyDeclaration<*> {
-        // "init" can refer to constructors OR a method literally named "init".
         if (name == "init") {
             val ctors = getTypeConstructors(baseCls)
             val methods = baseCls.methods.filter { it.nameAsString == "init" }
             val field = baseCls.fields.find { f -> f.variables.any { it.nameAsString == "init" } }
 
-            if (params == null) {
-                if (field != null)
-                    throw MergeException("$annName: cannot reference field 'init' in $rel: ambiguous with constructor")
-                val candidates = ctors.size + methods.size
-                if (candidates == 0) throw MergeException("$annName: 'init' not found in base for $rel")
-                if (candidates == 1) return (ctors + methods).first()
-                if (ctors.isNotEmpty() && methods.isNotEmpty())
-                    throw MergeException("$annName: 'init' in $rel could reference the constructor or the method; add parameter types to disambiguate")
-                throw MergeException("$annName: 'init' in $rel has $candidates overloads; add parameter types to disambiguate")
-            }
+            val ctorMatch = if (params != null) ctors.find { callableParamsMatch(it, params) } else null
+            val methodMatch = if (params != null) methods.find { callableParamsMatch(it, params) } else null
 
-            val ctorMatch = ctors.find { paramsMatch(it, params) }
-            val methodMatch = methods.find { paramsMatch(it, params) }
-            if (ctorMatch != null && methodMatch != null)
-                throw MergeException("$annName: constructor and method 'init' have the same signature in $rel; cannot resolve")
-            if (ctorMatch != null) return ctorMatch
-            if (methodMatch != null) return methodMatch
-            throw MergeException("$annName: 'init(${params.joinToString(", ")})' not found in base for $rel")
+            val resolution = MemberDescriptor.resolveInitAmbiguity(
+                ctorCount = ctors.size, methodCount = methods.size, fieldExists = field != null,
+                hasParams = params != null, ctorMatched = ctorMatch != null, methodMatched = methodMatch != null,
+            )
+            if (resolution.error != null) throw MergeException("$annName: ${resolution.error} in $rel")
+            return when (resolution.target) {
+                InitTarget.CONSTRUCTOR -> ctorMatch ?: ctors.first()
+                InitTarget.METHOD -> methodMatch ?: methods.first()
+                else -> throw MergeException("$annName: 'init' not found in base for $rel")
+            }
         }
 
         // Try fields first (no parens)
@@ -840,15 +835,6 @@ internal object True2PatchMergeEngine {
         return out
     }
 
-    private fun parseParamTypes(descriptor: String): List<String> {
-        val open  = descriptor.indexOf("(")
-        val close = descriptor.lastIndexOf(")")
-        if (open < 0 || close <= open) return emptyList()
-        val inner = descriptor.substring(open + 1, close).trim()
-        if (inner.isEmpty()) return emptyList()
-        return inner.split(",").map { MemberDescriptor.simpleTypeName(it.trim()) }
-    }
-
     // ---- Type-aware member accessors ----
 
     private fun getTypeConstructors(cls: TypeDeclaration<*>): List<ConstructorDeclaration> = when (cls) {
@@ -865,14 +851,8 @@ internal object True2PatchMergeEngine {
 
     // ---- Parameter matching and overload resolution ----
 
-    private fun paramsMatch(m: CallableDeclaration<*>, expected: List<String>): Boolean {
-        val params = m.parameters
-        if (params.size != expected.size) return false
-        for (i in params.indices) {
-            if (MemberDescriptor.simpleTypeName(params[i].typeAsString) != expected[i]) return false
-        }
-        return true
-    }
+    private fun callableParamsMatch(m: CallableDeclaration<*>, expected: List<String>): Boolean =
+        MemberDescriptor.matchesParams(m.parameters.map { it.typeAsString }, expected)
 
     private fun findByParams(
         overloads: List<CallableDeclaration<*>>,
@@ -881,7 +861,7 @@ internal object True2PatchMergeEngine {
         rel: String,
     ): CallableDeclaration<*> {
         if (params.isEmpty() && overloads.size == 1) return overloads[0]
-        return overloads.find { paramsMatch(it, params) }
+        return overloads.find { callableParamsMatch(it, params) }
             ?: throw MergeException("No overload '$name(${params.joinToString(", ")})' found in base for $rel")
     }
 }
