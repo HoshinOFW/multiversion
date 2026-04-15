@@ -18,12 +18,13 @@
     - This way the developer has some control over routing.
 ### Gradle:
 
-- Add support for only publishing to either curseforge or modrinth. Can be done via missing curseforge_id or modrinth_id. 
 - Add more configuration:
   - mixin config path.
   - Access transformers when architectury is turned on.
   - multiversion_resources.json path
-- Add an easy way to wire all versioned tasks to one main task. It should be possible to wire all :mc_version:fooTask into one :fooTask, and/or all :mc_version:module:fooTask into :fooTask
+- Add an easy way to wire all versioned tasks to one main task. It should be possible to wire all :mc_version:fooTask into one :fooTask, and/or all :mc_version:module:fooTask into :fooTask\
+  - Should be safe in case the task does not exist.
+  - Additionally should be able to pass a filter lambda Project -> boolean, letting people configure even more.
 - Add support for more types of mappings in architectury gradle.
 
 ### IDE:

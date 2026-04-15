@@ -171,6 +171,27 @@ Lists the module names that get patchedSrc generation. Fully independent of the 
 
 If a module is declared in `patchModules` but is missing from a particular version folder, a warning is logged and that version is skipped for the module. No error is thrown.
 
+#### `wireTask`
+
+Wires all `:mc_version:module:taskName` into a single root-level `:taskName`. Subprojects that do not have the task are silently skipped. An optional filter closure restricts which subprojects are wired.
+
+```groovy
+multiversionModules {
+    architecturyCommon   = ['common']
+    architecturyFabric   = ['fabric']
+    architecturyNeoforge = ['neoforge']
+    patchModules = ['common', 'fabric', 'neoforge']
+
+    // Wire all :mc_version:module:build into root :build
+    wireTask 'runClient'
+
+    // Wire only fabric subprojects
+    wireTask 'remapJar', { p -> p.name == 'fabric' }
+}
+```
+
+Running `./gradlew runClient` will execute `:1.20.1:fabric:runClient`, `:1.21.1:fabric:runClient`, etc. (whichever versioned subprojects have a `runClient` task).
+
 #### `multiversionConfiguration`
 
 A separate root-level closure for project-wide plugin behaviour settings.
