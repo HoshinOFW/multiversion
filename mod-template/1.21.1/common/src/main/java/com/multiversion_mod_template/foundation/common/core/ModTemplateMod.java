@@ -4,10 +4,12 @@ import com.github.hoshinofw.multiversion.DeleteMethodsAndFields;
 import com.github.hoshinofw.multiversion.ModifySignature;
 import com.github.hoshinofw.multiversion.OverwriteVersion;
 import com.github.hoshinofw.multiversion.ShadowVersion;
+import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 
 @DeleteMethodsAndFields({"TBDeleted"})
 public abstract class ModTemplateMod {
+    @NotNull
     @ShadowVersion
     public static final String MOD_ID;
 

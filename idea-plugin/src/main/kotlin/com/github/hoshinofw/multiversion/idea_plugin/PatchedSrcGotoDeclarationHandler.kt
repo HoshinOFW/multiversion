@@ -1,7 +1,6 @@
 package com.github.hoshinofw.multiversion.idea_plugin
 
 import com.github.hoshinofw.multiversion.engine.CachedOriginMap
-import com.github.hoshinofw.multiversion.engine.MemberDescriptor
 import com.github.hoshinofw.multiversion.engine.OriginResolver
 import com.github.hoshinofw.multiversion.engine.PathUtil
 import com.intellij.codeInsight.TargetElementUtil
@@ -54,17 +53,6 @@ class PatchedSrcGotoDeclarationHandler : GotoDeclarationHandler {
     }
 
     override fun getActionText(context: com.intellij.openapi.actionSystem.DataContext): String? = null
-
-    private fun memberKey(element: PsiElement): String? {
-        val method = PsiTreeUtil.getParentOfType(element, PsiMethod::class.java, false)
-        if (method != null) {
-            val params = method.parameterList.parameters.joinToString(",") { MemberDescriptor.simpleTypeName(it.type.presentableText) }
-            return if (method.isConstructor) "<init>(${params})" else "${method.name}(${params})"
-        }
-        val field = PsiTreeUtil.getParentOfType(element, PsiField::class.java, false)
-        if (field != null) return field.name
-        return null
-    }
 
     private fun resolveToPosition(project: Project, file: VirtualFile, line: Int, col: Int): PsiElement? {
         val psiFile = PsiManager.getInstance(project).findFile(file) ?: return null

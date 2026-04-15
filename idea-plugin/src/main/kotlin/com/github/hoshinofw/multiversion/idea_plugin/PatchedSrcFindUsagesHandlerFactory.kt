@@ -1,6 +1,5 @@
 package com.github.hoshinofw.multiversion.idea_plugin
 
-import com.github.hoshinofw.multiversion.engine.MemberDescriptor
 import com.github.hoshinofw.multiversion.engine.PathUtil
 import com.intellij.find.findUsages.FindUsagesHandler
 import com.intellij.find.findUsages.FindUsagesHandlerFactory
@@ -70,23 +69,6 @@ class PatchedSrcFindUsagesHandlerFactory : FindUsagesHandlerFactory() {
 
     private fun resolveInPatchedFile(element: PsiElement, patchedFile: PsiJavaFile): PsiElement? {
         val cls = patchedFile.classes.firstOrNull() ?: return null
-        return when (element) {
-            is PsiMethod -> {
-                val params = element.parameterList.parameters.map { MemberDescriptor.simpleTypeName(it.type.presentableText) }
-                if (element.isConstructor)
-                    cls.constructors.find { paramsMatch(it, params) }
-                else
-                    cls.methods.find { it.name == element.name && paramsMatch(it, params) }
-            }
-            is PsiField -> cls.fields.find { it.name == element.name }
-            is PsiClass -> patchedFile.classes.find { it.name == element.name }
-            else        -> null
-        }
-    }
-
-    private fun paramsMatch(method: PsiMethod, expected: List<String>): Boolean {
-        val params = method.parameterList.parameters
-        if (params.size != expected.size) return false
-        return params.indices.all { i -> MemberDescriptor.simpleTypeName(params[i].type.presentableText) == expected[i] }
+        return findMatchingElement(element, cls)
     }
 }

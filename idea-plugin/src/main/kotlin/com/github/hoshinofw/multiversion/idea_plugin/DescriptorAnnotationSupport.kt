@@ -2,17 +2,13 @@ package com.github.hoshinofw.multiversion.idea_plugin
 
 import com.github.hoshinofw.multiversion.engine.InitTarget
 import com.github.hoshinofw.multiversion.engine.MemberDescriptor
-import com.github.hoshinofw.multiversion.engine.PathUtil
-import com.github.hoshinofw.multiversion.engine.VersionUtil
 import com.intellij.codeInspection.LocalInspectionTool
 import com.intellij.codeInspection.ProblemsHolder
 import com.intellij.openapi.util.TextRange
-import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.patterns.PlatformPatterns
 import com.intellij.psi.*
 import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.util.ProcessingContext
-import java.io.File
 
 class DescriptorReferenceContributor : PsiReferenceContributor() {
     override fun registerReferenceProviders(registrar: PsiReferenceRegistrar) {
@@ -93,8 +89,8 @@ private fun validateDescriptor(descriptor: String, targetClass: PsiClass, source
         val methods = targetClass.findMethodsByName("init", false)
         val field = targetClass.findFieldByName("init", false)
 
-        val ctorMatch = if (parsed.params != null) ctors.find { psiParamsMatch(it, parsed.params!!) } else null
-        val methodMatch = if (parsed.params != null) methods.find { psiParamsMatch(it, parsed.params!!) } else null
+        val ctorMatch = if (parsed.params != null) ctors.find { descriptorParamsMatch(it, parsed.params!!) } else null
+        val methodMatch = if (parsed.params != null) methods.find { descriptorParamsMatch(it, parsed.params!!) } else null
 
         val resolution = MemberDescriptor.resolveInitAmbiguity(
             ctorCount = ctors.size, methodCount = methods.size, fieldExists = field != null,
@@ -121,12 +117,7 @@ private fun validateDescriptor(descriptor: String, targetClass: PsiClass, source
     else "'$descriptor' member reference could not be resolved in ${sourceClass.name}"
 }
 
-private fun psiParamsMatch(method: PsiMethod, expectedParams: List<String>): Boolean =
-    MemberDescriptor.matchesParams(method.parameterList.parameters.map { it.type.presentableText }, expectedParams)
-
 // -- Shared helpers --
-
-private val VERSION_REGEX = Regex("/(${VersionUtil.VERSION_PATTERN.pattern})/")
 
 /** Returns true if the annotation is one that contains member descriptor strings. */
 internal fun isDescriptorAnnotation(qualifiedName: String): Boolean {
@@ -134,76 +125,7 @@ internal fun isDescriptorAnnotation(qualifiedName: String): Boolean {
     return simple.startsWith("Delete") || simple == "ModifySignature"
 }
 
-fun findPreviousVersionClass(psiClass: PsiClass): PsiClass? {
-    val file = psiClass.containingFile?.virtualFile ?: return null
-    val normPath = file.path.replace('\\', '/')
-    val match = VERSION_REGEX.find(normPath) ?: return null
-    val currentVersion = match.groupValues[1]
-
-    val versionRoot = normPath.substringBefore("/${currentVersion}/")
-    val projectBase = File(versionRoot)
-    val versionDirs = projectBase.listFiles { f ->
-        f.isDirectory && VersionUtil.looksLikeVersion(f.name)
-    }?.sortedWith { a, b -> VersionUtil.compareVersions(a.name, b.name) } ?: return null
-
-    val currentIdx = versionDirs.indexOfFirst { it.name == currentVersion }
-    if (currentIdx <= 0) return null
-    val prevVersion = versionDirs[currentIdx - 1]
-
-    val versionSuffix = "/${currentVersion}/"
-    val afterVersion  = normPath.substring(normPath.indexOf(versionSuffix) + versionSuffix.length)
-    val trueSrcMarker = "/${PathUtil.TRUE_SRC_MARKER}/"
-    val moduleName    = afterVersion.substringBefore(trueSrcMarker)
-
-    val srcMainJavaIdx = normPath.indexOf(trueSrcMarker)
-    if (srcMainJavaIdx < 0) return null
-    val relClassPath = normPath.substring(srcMainJavaIdx + trueSrcMarker.length)
-
-    // Descriptors reference members in the previous version's patchedSrc (merged output),
-    // which contains all inherited members from earlier versions. Fall back to src/main/java
-    // for the oldest version (no patchedSrc) or when patchedSrc hasn't been generated yet.
-    val patchedFile = File(prevVersion, "$moduleName/${PathUtil.PATCHED_SRC_DIR}/${PathUtil.JAVA_SRC_SUBDIR}/$relClassPath")
-    val srcFile = File(prevVersion, "$moduleName/${PathUtil.TRUE_SRC_MARKER}/$relClassPath")
-    val prevIoFile = if (patchedFile.exists()) patchedFile else srcFile
-    val prevVf = LocalFileSystem.getInstance().findFileByIoFile(prevIoFile) ?: return null
-    val prevPsiFile = PsiManager.getInstance(psiClass.project).findFile(prevVf) ?: return null
-    return PsiTreeUtil.findChildOfType(prevPsiFile, PsiClass::class.java)
-}
-
-fun resolveDescriptorInClass(descriptor: String, cls: PsiClass): PsiElement? {
-    val parsed = MemberDescriptor.parseDescriptor(descriptor)
-
-    if (parsed.name == "init") {
-        val ctors = cls.constructors
-        val methods = cls.findMethodsByName("init", false)
-        val field = cls.findFieldByName("init", false)
-
-        val ctorMatch = if (parsed.params != null) ctors.find { psiParamsMatch(it, parsed.params!!) } else null
-        val methodMatch = if (parsed.params != null) methods.find { psiParamsMatch(it, parsed.params!!) } else null
-
-        val resolution = MemberDescriptor.resolveInitAmbiguity(
-            ctorCount = ctors.size, methodCount = methods.size, fieldExists = field != null,
-            hasParams = parsed.params != null, ctorMatched = ctorMatch != null, methodMatched = methodMatch != null,
-        )
-        if (resolution.error != null) return null
-        return when (resolution.target) {
-            InitTarget.CONSTRUCTOR -> ctorMatch ?: ctors.firstOrNull()
-            InitTarget.METHOD -> methodMatch ?: methods.firstOrNull()
-            else -> null
-        }
-    }
-
-    if (parsed.params == null) {
-        val methods = cls.findMethodsByName(parsed.name, false)
-        if (methods.size == 1) return methods[0]
-        if (methods.isEmpty()) return cls.findFieldByName(parsed.name, false)
-        return null // ambiguous
-    }
-
-    return cls.findMethodsByName(parsed.name, false).find { psiParamsMatch(it, parsed.params!!) }
-}
-
-private fun PsiAnnotation.owner(): PsiClass? {
+internal fun PsiAnnotation.owner(): PsiClass? {
     // For class-level annotations (@DeleteMethodsAndFields), the owner is the annotated class.
     // For member-level annotations (@ModifySignature), the owner is the containing class.
     val parent = PsiTreeUtil.getParentOfType(this, PsiMember::class.java) ?: return null
@@ -228,4 +150,3 @@ private fun forEachDescriptorLiteral(annotation: PsiAnnotation, action: (PsiLite
         }
     }
 }
-

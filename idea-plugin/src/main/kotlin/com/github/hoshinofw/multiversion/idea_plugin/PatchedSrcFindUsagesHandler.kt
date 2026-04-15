@@ -1,6 +1,5 @@
 package com.github.hoshinofw.multiversion.idea_plugin
 
-import com.github.hoshinofw.multiversion.engine.MemberDescriptor
 import com.intellij.find.findUsages.FindUsagesHandler
 import com.intellij.find.findUsages.FindUsagesOptions
 import com.intellij.openapi.application.ReadAction
@@ -46,7 +45,7 @@ class PatchedSrcFindUsagesHandler(
      * For file-level refs (imports, class refs): uses text offset directly since non-merged
      * files are byte-identical copies.
      */
-    private fun mapToRealSource(ref: PsiReference, project: Project, cache: OriginMapCache): UsageInfo? {
+    private fun mapToRealSource(ref: PsiReference, project: Project, cache: OriginMapCache): UsageInfo {
         val refElement = ref.element
         val refFile    = refElement.containingFile?.virtualFile ?: return UsageInfo(refElement)
 
@@ -62,7 +61,7 @@ class PatchedSrcFindUsagesHandler(
                 if (enclosing != null) {
                     val originMember = findMemberByKey(originPsiFile, memberKey)
                     if (originMember != null) {
-                        val offsetInMember = refElement.textOffset - enclosing.textOffset
+                        val offsetInMember = refElement.textOffset - (enclosing as PsiElement).textOffset
                         val originOffset = (originMember.textOffset + offsetInMember)
                             .coerceIn(0, originPsiFile.textLength - 1)
                         val originElement = originPsiFile.findElementAt(originOffset)
@@ -80,55 +79,6 @@ class PatchedSrcFindUsagesHandler(
         return UsageInfo(originElement ?: refElement)
     }
 
-    private fun findMemberByKey(file: PsiFile, memberKey: String): PsiElement? {
-        val javaFile = file as? PsiJavaFile ?: return null
-        val cls = javaFile.classes.firstOrNull() ?: return null
-
-        if (memberKey.startsWith("<init>(")) {
-            val params = parseKeyParams(memberKey)
-            return cls.constructors.find { matchParams(it, params) }
-        }
-
-        val parenIdx = memberKey.indexOf('(')
-        if (parenIdx >= 0) {
-            val name = memberKey.substring(0, parenIdx)
-            val params = parseKeyParams(memberKey)
-            return cls.methods.find { it.name == name && matchParams(it, params) }
-        }
-
-        // Field
-        return cls.fields.find { it.name == memberKey }
-    }
-
-    private fun parseKeyParams(key: String): List<String> {
-        val inner = key.substringAfter("(").substringBefore(")")
-        return if (inner.isEmpty()) emptyList() else inner.split(",")
-    }
-
-    private fun matchParams(method: PsiMethod, expected: List<String>): Boolean {
-        val params = method.parameterList.parameters
-        if (params.size != expected.size) return false
-        return params.indices.all { i ->
-            MemberDescriptor.simpleTypeName(params[i].type.presentableText) == expected[i]
-        }
-    }
-
-    /**
-     * Returns the originMap member key for the method, constructor, or field enclosing [element],
-     * using the same format written by the merge engine:
-     * methods → `name(Param1,Param2)`, constructors → `init(Param1,Param2)`, fields → `name`.
-     */
-    private fun surroundingMemberKey(element: PsiElement): String? {
-        val method = PsiTreeUtil.getParentOfType(element, PsiMethod::class.java, false)
-        if (method != null) {
-            val params = method.parameterList.parameters.joinToString(",") {
-                MemberDescriptor.simpleTypeName(it.type.presentableText)
-            }
-            return if (method.isConstructor) "<init>($params)" else "${method.name}($params)"
-        }
-        val field = PsiTreeUtil.getParentOfType(element, PsiField::class.java, false)
-        if (field != null) return field.name
-        return null
-    }
+    private fun surroundingMemberKey(element: PsiElement): String? = memberKey(element)
 
 }

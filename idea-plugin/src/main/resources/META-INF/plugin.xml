@@ -23,6 +23,12 @@
                          enabledByDefault="true"
                          level="ERROR"
                          implementationClass="com.github.hoshinofw.multiversion.idea_plugin.DescriptorAnnotationInspection"/>
+        <localInspection language="JAVA"
+                         displayName="Missing original annotations"
+                         groupName="Multiversion"
+                         enabledByDefault="true"
+                         level="WARNING"
+                         implementationClass="com.github.hoshinofw.multiversion.idea_plugin.MissingOriginalAnnotationsInspection"/>
         <applicationService serviceImplementation="com.github.hoshinofw.multiversion.idea_plugin.MultiversionSettings"/>
         <applicationConfigurable parentId="tools"
                                  instance="com.github.hoshinofw.multiversion.idea_plugin.MultiversionConfigurable"
