@@ -1,5 +1,6 @@
 package com.github.hoshinofw.multiversion.idea_plugin
 
+import com.github.hoshinofw.multiversion.engine.MemberDescriptor
 import com.github.hoshinofw.multiversion.engine.PathUtil
 import com.github.hoshinofw.multiversion.engine.VersionUtil
 import com.intellij.codeInspection.LocalInspectionTool
@@ -111,7 +112,7 @@ private fun validateDescriptor(descriptor: String, targetClass: PsiClass, source
         // "init(...)" with params
         val paramStr = descriptor.substringAfter("(").substringBeforeLast(")")
         val expectedParams = if (paramStr.isBlank()) emptyList()
-        else paramStr.split(",").map { it.trim().substringAfterLast(".").replace("[]", "").replace("...", "") }
+        else paramStr.split(",").map { MemberDescriptor.simpleTypeName(it.trim()) }
 
         val ctorMatch = ctors.find { matchesParams(it, expectedParams) }
         val methodMatch = methods.find { matchesParams(it, expectedParams) }
@@ -143,13 +144,13 @@ private fun matchesParams(method: PsiMethod, expectedParams: List<String>): Bool
     val params = method.parameterList.parameters
     if (params.size != expectedParams.size) return false
     return params.zip(expectedParams).all { (p, expected) ->
-        p.type.presentableText.substringAfterLast(".").replace("[]", "").replace("...", "") == expected
+        MemberDescriptor.simpleTypeName(p.type.presentableText) == expected
     }
 }
 
 // -- Shared helpers --
 
-private val VERSION_REGEX = Regex("""/(\d+\.\d+(?:\.\d+)?)/""")
+private val VERSION_REGEX = Regex("/(${VersionUtil.VERSION_PATTERN.pattern})/")
 
 /** Returns true if the annotation is one that contains member descriptor strings. */
 internal fun isDescriptorAnnotation(qualifiedName: String): Boolean {
@@ -166,7 +167,7 @@ fun findPreviousVersionClass(psiClass: PsiClass): PsiClass? {
     val versionRoot = normPath.substringBefore("/${currentVersion}/")
     val projectBase = File(versionRoot)
     val versionDirs = projectBase.listFiles { f ->
-        f.isDirectory && f.name.matches(Regex("""\d+\.\d+(\.\d+)?"""))
+        f.isDirectory && VersionUtil.looksLikeVersion(f.name)
     }?.sortedWith { a, b -> VersionUtil.compareVersions(a.name, b.name) } ?: return null
 
     val currentIdx = versionDirs.indexOfFirst { it.name == currentVersion }
@@ -205,11 +206,11 @@ fun resolveDescriptorInClass(descriptor: String, cls: PsiClass): PsiElement? {
         if (hasParams) {
             val paramStr = descriptor.substringAfter("(").substringBeforeLast(")")
             val expectedParams = if (paramStr.isBlank()) emptyList()
-            else paramStr.split(",").map { it.trim().substringAfterLast(".").replace("[]", "").replace("...", "") }
+            else paramStr.split(",").map { MemberDescriptor.simpleTypeName(it.trim()) }
             val match = ctors.find { ctor ->
                 val params = ctor.parameterList.parameters
                 params.size == expectedParams.size && params.zip(expectedParams).all { (p, expected) ->
-                    p.type.presentableText.substringAfterLast(".").replace("[]", "").replace("...", "") == expected
+                    MemberDescriptor.simpleTypeName(p.type.presentableText) == expected
                 }
             }
             if (match != null) return match
@@ -226,12 +227,12 @@ fun resolveDescriptorInClass(descriptor: String, cls: PsiClass): PsiElement? {
 
     val paramStr = descriptor.substringAfter("(").substringBeforeLast(")")
     val expectedParams = if (paramStr.isBlank()) emptyList()
-    else paramStr.split(",").map { it.trim().substringAfterLast(".").replace("[]", "").replace("...", "") }
+    else paramStr.split(",").map { MemberDescriptor.simpleTypeName(it.trim()) }
 
     return cls.findMethodsByName(name, false).find { method ->
         val params = method.parameterList.parameters
         params.size == expectedParams.size && params.zip(expectedParams).all { (p, expected) ->
-            p.type.presentableText.substringAfterLast(".").replace("[]", "").replace("...", "") == expected
+            MemberDescriptor.simpleTypeName(p.type.presentableText) == expected
         }
     }
 }

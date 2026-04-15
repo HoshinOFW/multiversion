@@ -1,5 +1,13 @@
 # Merge Engine Changelog
 
+## 0.2.7
+
+- Added `CachedOriginMap` for file-modification-aware caching of origin maps
+
+## 0.2.6
+
+- Added `ResourcePatchConfig` and `ResourcePatchEngine` for resource patching (delete/move operations from `multiversion-resources.json`)
+
 ## 0.2.5
 
 - Added `EngineConfig` data class with `fromJson()`/`toJson()`/`fromFile()`/`toFile()` as the single source of truth for config serialization

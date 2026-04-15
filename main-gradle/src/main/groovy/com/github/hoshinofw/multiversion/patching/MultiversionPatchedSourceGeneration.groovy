@@ -5,6 +5,8 @@ import com.github.hoshinofw.multiversion.engine.EngineConfig
 import com.github.hoshinofw.multiversion.engine.MergeEngine
 import com.github.hoshinofw.multiversion.engine.OriginMap
 import com.github.hoshinofw.multiversion.engine.PathUtil
+import com.github.hoshinofw.multiversion.engine.ResourcePatchConfig
+import com.github.hoshinofw.multiversion.engine.ResourcePatchEngine
 import com.github.hoshinofw.multiversion.engine.VersionUtil
 import com.github.hoshinofw.multiversion.util.GeneralUtil
 import com.github.hoshinofw.multiversion.util.PatchingUtil
@@ -37,7 +39,7 @@ class MultiversionPatchedSourceGeneration {
                     .collect { p -> p.path.split(':').findAll { it } }
                     .findAll { parts -> parts.size() == 2 }
                     .collect { parts -> parts[0] }
-                    .findAll { it ==~ /\d+(\.\d+){1,3}/ }
+                    .findAll { VersionUtil.looksLikeVersion(it) }
                     .toSet()
 
             ArrayList<TaskProvider> patchedGenTasks = []
@@ -105,9 +107,9 @@ class MultiversionPatchedSourceGeneration {
         }
 
         // Resource patch configs (multiversion-resources.json) per version
-        Map<String, Map> resPatchByVer = [:]
+        Map<String, ResourcePatchConfig> resPatchByVer = [:]
         versions.each { v ->
-            resPatchByVer[v] = PatchingUtil.loadResourcePatchConfig(verToProj[v].file("src/main/resources"))
+            resPatchByVer[v] = ResourcePatchConfig.fromDirectory(verToProj[v].file("src/main/resources"))
         }
 
         // Build patchedSrc for each version after the first
@@ -124,10 +126,10 @@ class MultiversionPatchedSourceGeneration {
             // CUMULATIVENESS CONTROL: To make operations non-cumulative (apply only to the
             // declaring version), change the loop range below from (0..i) to (i..<i+1).
             List<String> cumulativeResDeletes = []
-            List<Map<String, String>> cumulativeResMoves = []
+            List<ResourcePatchConfig.MoveEntry> cumulativeResMoves = []
             for (int j = 0; j <= i; j++) {
-                cumulativeResDeletes.addAll(resPatchByVer[versions[j]]?.delete ?: [])
-                cumulativeResMoves.addAll(resPatchByVer[versions[j]]?.move ?: [])
+                cumulativeResDeletes.addAll(resPatchByVer[versions[j]]?.deletes ?: [])
+                cumulativeResMoves.addAll(resPatchByVer[versions[j]]?.moves ?: [])
             }
             Set<String> patchVerResFiles = relResByVer[patchVer] ?: new LinkedHashSet<String>()
 
@@ -294,7 +296,7 @@ class MultiversionPatchedSourceGeneration {
                             from(currentResSrcDir) { spec -> spec.include("**/*") }
                         }
 
-                        PatchingUtil.applyResourcePatch(
+                        ResourcePatchEngine.applyResourcePatch(
                                 outResDir.get().asFile,
                                 cumulativeResDeletes,
                                 cumulativeResMoves,

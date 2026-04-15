@@ -11,7 +11,7 @@ class GeneralUtil {
     }
 
     static boolean looksLikeMcVersion(String s) {
-        return s ==~ /\d+(\.\d+){1,3}/
+        return com.github.hoshinofw.multiversion.engine.VersionUtil.looksLikeVersion(s)
     }
 
     static boolean isValidModLoaderList(String s) {
@@ -37,7 +37,7 @@ class GeneralUtil {
      */
     static boolean isVersionModule(Project p, String moduleName) {
         def parts = p.path.split(':').findAll { it }
-        parts.size() == 2 && parts[1] == moduleName && (parts[0] ==~ /\d+(\.\d+){1,3}/)
+        parts.size() == 2 && parts[1] == moduleName && looksLikeMcVersion(parts[0])
     }
 
     static boolean isMcVersion(Project p, String version) {

@@ -1,44 +1,3 @@
-### Next Implementation: Merging more into merge engine
-
-Treat the engine as a true common library, not just something that owns merge logic.
-
-**Tier 1: High impact**
-
-1. **EngineConfig data class + parsing into engine**
-   - Gradle writes `multiversion-engine-config.json` with ad-hoc serialization (`MultiversionPatchedSourceGeneration.groovy:311-329`).
-   - IDE reads it with custom regex parsing in `EngineConfigCache.kt` (fragile, no JSON library, manual unescaping).
-   - Move to engine: `EngineConfig` data class with `fromJson()`/`toJson()`. Both consumers use the engine's contract type. IDE keeps its cache layer (IntelliJ-specific), but parsing and data model live in one place.
-   - Riskiest duplication: a format mismatch between writer and reader is a silent, hard-to-debug failure.
-
-2. **Resource patching logic into engine**
-   - `PatchingUtil.groovy` loads `multiversion-resources.json` and applies delete/move operations. IDE doesn't do this yet, but would have to reimplement if live patchedSrc updates ever handle resources.
-   - Move to engine: config loading (`loadResourcePatchConfig`) and application logic (`applyResourcePatch`). Gradle calls it at build time; IDE could call it if/when needed.
-   - This is merge-adjacent logic (layered resource patching follows the same model as source patching).
-   - Already listed below in "Engine + Annotations" but blocked on more resource patching features being added.
-
-3. **Version regex pattern constant**
-   - Pattern `\d+\.\d+(\.\d+)?` appears independently in `DescriptorAnnotationSupport.kt:153` (IDE), `GeneralUtil.groovy` (Gradle, as `looksLikeMcVersion`), and is implicitly assumed by `VersionUtil.compareVersions`.
-   - Add `VERSION_PATTERN` constant and `looksLikeVersion(s: String): Boolean` to `VersionUtil`. Tiny change, eliminates subtle divergence.
-
-**Tier 2: Medium impact, clean wins**
-
-4. **OriginMapCache into engine**
-   - `PatchedSrcGotoDeclarationHandler.kt` has an inner `OriginMapCache` (lines 109-198): wraps `OriginMap` with file-modification-based invalidation and pre-resolved `OriginResolver` instances. This is general-purpose caching, not IDE-specific.
-   - Move to engine as `CachedOriginMap` or similar. IDE keeps VirtualFile/IntelliJ wiring but delegates cache logic.
-
-5. **Eliminate small duplications in IDE plugin**
-   - `DescriptorAnnotationSupport.kt:147,235`: manual type simplification (`substringAfterLast(".").replace("[]","")`) duplicates `MemberDescriptor.simpleTypeName()`.
-   - `PatchedSrcFindUsagesHandlerFactory.kt:35-36`: manual `Paths.get().relativize().replace('\\','/')` duplicates `PathUtil.relativize()`.
-   - `DescriptorAnnotationSupport.kt:153`: private `VERSION_REGEX` duplicates the pattern from item 3.
-
-**Tier 3: Low impact / skip**
-
-6. **Module type detection (fabric/forge/neoforge/common)**: Gradle works with `Project` objects, IDE with `VirtualFile`. Logic is trivial (check directory name). Abstracting over the file system adds more complexity than it removes. Leave as-is.
-
-7. **Dead `CollectionUtil.compareMcVersions()` in Gradle**: never called, Gradle already uses `VersionUtil.compareVersions()` from engine. Just delete it.
-
----
-
 ### Observed Bugs:
 
 ### Test:
@@ -60,9 +19,6 @@ Treat the engine as a true common library, not just something that owns merge lo
 - Create and enforce @ModifyClass to make modifications explicit.
   - the target is implicit via class name, although the annotation can optionally also take a string parameter to have a separate target name.
     - This way the developer has some control over routing.
-- Transfer resource patching from the gradle plugin into the merge engine if possible.
-  - Only really useful once more features are added to resource patching.
-
 ### Gradle:
 
 - Add support for only publishing to either curseforge or modrinth. Can be done via missing curseforge_id or modrinth_id. 
@@ -72,7 +28,6 @@ Treat the engine as a true common library, not just something that owns merge lo
   - multiversion_resources.json path
 - Add an easy way to wire all versioned tasks to one main task. It should be possible to wire all :mc_version:fooTask into one :fooTask, and/or all :mc_version:module:fooTask into :fooTask
 - Add support for more types of mappings in architectury gradle.
-
 
 ### IDE:
 

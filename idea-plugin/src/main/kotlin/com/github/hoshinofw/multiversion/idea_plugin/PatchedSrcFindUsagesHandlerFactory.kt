@@ -32,8 +32,7 @@ class PatchedSrcFindUsagesHandlerFactory : FindUsagesHandlerFactory() {
         val sourceRoot = getVersionedSourceRoot(file) ?: return null
 
         val rel = try {
-            Paths.get(sourceRoot.path).relativize(Paths.get(file.path))
-                .toString().replace('\\', '/')
+            PathUtil.relativize(Paths.get(sourceRoot.path), Paths.get(file.path))
         } catch (_: Exception) { return null }
 
         // Locate the patchedSrc file at the same relative path

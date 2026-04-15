@@ -1,7 +1,7 @@
 package com.github.hoshinofw.multiversion.idea_plugin
 
+import com.github.hoshinofw.multiversion.engine.CachedOriginMap
 import com.github.hoshinofw.multiversion.engine.MemberDescriptor
-import com.github.hoshinofw.multiversion.engine.OriginMap
 import com.github.hoshinofw.multiversion.engine.OriginResolver
 import com.github.hoshinofw.multiversion.engine.PathUtil
 import com.intellij.codeInsight.TargetElementUtil
@@ -114,8 +114,7 @@ class OriginMapCache(private val project: Project) {
             INSTANCES.computeIfAbsent(project.locationHash) { OriginMapCache(project) }
     }
 
-    private data class CacheEntry(val mappingFile: File, var lastModified: Long, var map: OriginMap)
-    private val cache = ConcurrentHashMap<String, CacheEntry>()
+    private val mapCache = CachedOriginMap()
 
     private data class ResolverContext(
         val relKey: String,
@@ -143,13 +142,14 @@ class OriginMapCache(private val project: Project) {
         val relKey = rel.removePrefix("${PathUtil.JAVA_SRC_SUBDIR}/")
                         .removePrefix("${PathUtil.RESOURCES_SRC_SUBDIR}/")
 
-        val entry = loadedEntry(patchedRoot) ?: return null
+        val mappingFile = File("$patchedRoot/${PathUtil.ORIGIN_MAP_FILENAME}")
+        val map = mapCache.get(mappingFile) ?: return null
 
         val moduleRootPath = patchedRoot.substringBeforeLast("/${PathUtil.PATCHED_SRC_DIR}")
         val moduleRootVf = LocalFileSystem.getInstance().findFileByPath(moduleRootPath)
         val config = moduleRootVf?.let { EngineConfigCache.forModuleRoot(it) }
 
-        val resolver = OriginResolver(entry.map, config?.baseRelRoot ?: "")
+        val resolver = OriginResolver(map, config?.baseRelRoot ?: "")
         return ResolverContext(relKey, patchedRoot, resolver)
     }
 
@@ -173,16 +173,6 @@ class OriginMapCache(private val project: Project) {
         }
         return null
     }
-
-    private fun loadedEntry(patchedRoot: String): CacheEntry? =
-        cache.compute(patchedRoot) { _, existing ->
-            val mappingFile = File("$patchedRoot/${PathUtil.ORIGIN_MAP_FILENAME}")
-            if (!mappingFile.exists()) return@compute null
-            val lastMod = mappingFile.lastModified()
-            if (existing == null || existing.lastModified != lastMod)
-                CacheEntry(mappingFile, lastMod, OriginMap.fromFile(mappingFile))
-            else existing
-        }
 
     private fun patchedRoot(path: String): String? {
         val marker = "/${PathUtil.PATCHED_SRC_DIR}/"

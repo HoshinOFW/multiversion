@@ -84,7 +84,7 @@ class DistributorPublishingConfiguration {
 
             //Discovery
             baseDir.listFiles()
-                    ?.findAll { it.directory && it.name ==~ /\d+(\.\d+){1,3}/ }
+                    ?.findAll { it.directory && GeneralUtil.looksLikeMcVersion(it.name) }
                     ?.sort { a, b -> a.name <=> b.name }
                     ?.each { mcDir ->
 

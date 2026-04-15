@@ -1,6 +1,7 @@
 package com.github.hoshinofw.multiversion.idea_plugin
 
 import com.github.hoshinofw.multiversion.engine.PathUtil
+import com.github.hoshinofw.multiversion.engine.VersionUtil
 import com.github.hoshinofw.multiversion.engine.VersionUtil.compareVersions
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
@@ -8,7 +9,7 @@ import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.JavaPsiFacade
 import com.intellij.psi.search.GlobalSearchScope
 
-private val VERSION_PATTERN = Regex("""\d+\.\d+(\.\d+)?""")
+private val VERSION_PATTERN = VersionUtil.VERSION_PATTERN
 
 private const val SENTINEL_CLASS = "com.github.hoshinofw.multiversion.DeleteMethodsAndFields"
 
