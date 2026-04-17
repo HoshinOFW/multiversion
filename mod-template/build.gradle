@@ -4,6 +4,7 @@ plugins {
 
 multiversionConfiguration {
     automaticArchApi = true
+
 }
 
 multiversionResources {
@@ -12,15 +13,6 @@ multiversionResources {
             "mod_description" : mod_description.toString(),
             "mod_author" : mod_author.toString()
     ]
-}
-
-multiversionModules {
-    architecturyCommon = ['common']
-    architecturyFabric = ['fabric']
-    architecturyForge = ['forge']
-    architecturyNeoforge = ['neoforge']
-
-    patchModules = ['forge', 'fabric', 'neoforge', 'common']
 }
 
 repositories {

@@ -1,7 +1,7 @@
 package com.github.hoshinofw.multiversion
 
 /**
- * DSL extension registered as {@code multiversionModules { }} in the root build.gradle.
+ * DSL extension registered as {@code multiversionModules { }} in settings.gradle.
  *
  * <p>Each module name must appear in exactly one plain loader-type list. Plain lists drive
  * all routing utilities ({@code isFabric()}, {@code moduleType()}, etc.) and determine
@@ -13,7 +13,7 @@ package com.github.hoshinofw.multiversion
  * {@code architectury*} list implicitly adds it to the matching plain list, so there is
  * no need to declare it twice.
  *
- * <p>Example — all modules use Architectury/Loom:
+ * <p>Example -- all modules use Architectury/Loom:
  * <pre>
  * multiversionModules {
  *     architecturyCommon   = ['common']
@@ -23,16 +23,24 @@ package com.github.hoshinofw.multiversion
  * }
  * </pre>
  *
- * <p>Example — mixed: one plain module, others use Loom:
+ * <p>Example -- mixed: one plain module, others use Loom:
  * <pre>
  * multiversionModules {
- *     common   = ['api']          // plain — no Loom, user manages build setup
+ *     common   = ['api']          // plain -- no Loom, user manages build setup
  *     architecturyCommon   = ['common']
  *     architecturyFabric   = ['fabric']
  *     architecturyNeoforge = ['neoforge']
  *     patchModules = ['api', 'common', 'fabric', 'neoforge']
  * }
  * </pre>
+ *
+ * <h3>Version discovery configuration</h3>
+ * <p>These fields control how the settings plugin discovers version directories:
+ * <ul>
+ *   <li>{@code versionPattern} -- custom regex for matching version directory names
+ *       (default: {@code ^\d+(\.\d+){1,3}$})</li>
+ *   <li>{@code versions} -- explicit ordered version list; when set, skips filesystem scanning</li>
+ * </ul>
  */
 class MultiversionModulesExtension {
 
@@ -76,29 +84,20 @@ class MultiversionModulesExtension {
      */
     List<String> patchModules = []
 
-    // ---- Task wiring ----
-
-    /** Internal storage for wireTask declarations. */
-    List<Map<String, Object>> _wiredTasks = []
+    // ---- Version discovery configuration ----
 
     /**
-     * Wires all {@code :mc_version:module:taskName} into a single root-level {@code :taskName}.
-     * If a versioned subproject does not have the task, it is silently skipped.
-     *
-     * <p>Example:
-     * <pre>
-     * multiversionModules {
-     *     wireTask 'runClient'
-     *     wireTask 'remapJar', { Project p -> p.name == 'fabric' }
-     * }
-     * </pre>
-     *
-     * @param taskName The task name to aggregate.
-     * @param filter   Optional filter closure ({@code Project -> boolean}). Only matching subprojects are wired.
+     * Custom regex pattern for matching version directory names.
+     * When {@code null}, the default pattern {@code ^\d+(\.\d+){1,3}$} is used.
      */
-    void wireTask(String taskName, Closure<Boolean> filter = null) {
-        _wiredTasks.add([taskName: taskName, filter: filter])
-    }
+    String versionPattern = null
+
+    /**
+     * Explicit ordered list of version strings. When set (non-null), the settings plugin
+     * uses this list directly instead of scanning the filesystem for version directories.
+     * Each entry must correspond to a directory name under the project root.
+     */
+    List<String> versions = null
 
     // ---- Queries ----
 

@@ -29,6 +29,12 @@
                          enabledByDefault="true"
                          level="WARNING"
                          implementationClass="com.github.hoshinofw.multiversion.idea_plugin.MissingOriginalAnnotationsInspection"/>
+        <localInspection language="JAVA"
+                         displayName="Missing explicit multiversion annotation"
+                         groupName="Multiversion"
+                         enabledByDefault="true"
+                         level="ERROR"
+                         implementationClass="com.github.hoshinofw.multiversion.idea_plugin.MissingExplicitAnnotationInspection"/>
         <applicationService serviceImplementation="com.github.hoshinofw.multiversion.idea_plugin.MultiversionSettings"/>
         <applicationConfigurable parentId="tools"
                                  instance="com.github.hoshinofw.multiversion.idea_plugin.MultiversionConfigurable"
@@ -39,7 +45,34 @@
         <findUsagesHandlerFactory implementation="com.github.hoshinofw.multiversion.idea_plugin.PatchedSrcFindUsagesHandlerFactory"
         />
         <postStartupActivity implementation="com.github.hoshinofw.multiversion.idea_plugin.MultiversionProjectStartup"/>
+        <codeInsight.lineMarkerProvider language="JAVA"
+                                        implementationClass="com.github.hoshinofw.multiversion.idea_plugin.VersionNavigationLineMarkerProvider"/>
     </extensions>
+
+    <actions>
+        <group id="multiversion.NavigationGroup" text="Multiversion Navigation"
+               description="Navigate between Minecraft version sources">
+            <action id="multiversion.NavigateUpstream"
+                    class="com.github.hoshinofw.multiversion.idea_plugin.NavigateUpstreamAction"
+                    text="Go to Upstream Version"
+                    description="Navigate to the same element in the previous (older) version">
+                <keyboard-shortcut keymap="$default" first-keystroke="alt W"/>
+            </action>
+            <action id="multiversion.NavigateDownstream"
+                    class="com.github.hoshinofw.multiversion.idea_plugin.NavigateDownstreamAction"
+                    text="Go to Downstream Version"
+                    description="Navigate to the same element in the next (newer) version">
+                <keyboard-shortcut keymap="$default" first-keystroke="alt S"/>
+            </action>
+            <action id="multiversion.ShowAllVersions"
+                    class="com.github.hoshinofw.multiversion.idea_plugin.ShowAllVersionsPopupAction"
+                    text="Show All Versions"
+                    description="Show all versions of the current member or class">
+                <keyboard-shortcut keymap="$default" first-keystroke="alt shift V"/>
+            </action>
+            <add-to-group group-id="GoToMenu" anchor="last"/>
+        </group>
+    </actions>
 
     <applicationListeners>
         <listener class="com.github.hoshinofw.multiversion.idea_plugin.MultiversionOnSaveListener"

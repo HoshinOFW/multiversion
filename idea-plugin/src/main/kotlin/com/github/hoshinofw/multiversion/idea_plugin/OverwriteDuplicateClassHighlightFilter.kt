@@ -1,6 +1,5 @@
 package com.github.hoshinofw.multiversion.idea_plugin
 
-import com.github.hoshinofw.multiversion.engine.PathUtil
 import com.github.hoshinofw.multiversion.engine.VersionUtil
 import com.intellij.codeInsight.daemon.impl.HighlightInfo
 import com.intellij.codeInsight.daemon.impl.HighlightInfoFilter
@@ -11,7 +10,6 @@ import com.intellij.psi.PsiJavaFile
 import com.intellij.psi.search.GlobalSearchScope
 
 private val VERSION_DIR_REGEX = Regex("/(${VersionUtil.VERSION_PATTERN.pattern})/")
-private val PATCHED_SEGMENT = "/${PathUtil.PATCHED_SRC_DIR}/"
 
 class OverwriteDuplicateClassHighlightFilter : HighlightInfoFilter {
 
@@ -37,8 +35,8 @@ class OverwriteDuplicateClassHighlightFilter : HighlightInfoFilter {
                 c.containingFile?.virtualFile?.path?.replace('\\', '/')
             }
 
-            val hasPatched = paths.any { p -> p.contains(PATCHED_SEGMENT) }
-            val hasNonPatched = paths.any { p -> !p.contains(PATCHED_SEGMENT) }
+            val hasPatched = paths.any { p -> isInPatchedSrc(p) }
+            val hasNonPatched = paths.any { p -> !isInPatchedSrc(p) }
             if (hasPatched && hasNonPatched) return false
 
             val versions = paths.mapNotNull { p -> VERSION_DIR_REGEX.find(p)?.groupValues?.get(1) }.toSet()

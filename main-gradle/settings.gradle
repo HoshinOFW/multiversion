@@ -1,1 +1,3 @@
 rootProject.name = "main-gradle"
+
+includeBuild '../merge-engine'

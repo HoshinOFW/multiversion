@@ -4,8 +4,10 @@ import com.github.hoshinofw.multiversion.engine.EngineConfig
 import com.github.hoshinofw.multiversion.engine.MergeEngine
 import com.github.hoshinofw.multiversion.engine.OriginMap
 import com.github.hoshinofw.multiversion.engine.PathUtil
+import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
-import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.openapi.vfs.VirtualFile
 import java.io.File
 import java.nio.file.Paths
@@ -18,13 +20,15 @@ import java.nio.file.Paths
  * All cases (overlay present, overlay absent, base absent) are delegated to the merge engine
  * so it also keeps the origin map consistent on every update.
  */
-internal fun updatePatchedSrcWithCascade(vFile: VirtualFile, content: String) {
+internal fun updatePatchedSrcWithCascade(vFile: VirtualFile, content: String, project: Project? = null) {
     val moduleRoot = getVersionedModuleRoot(vFile) ?: return
     val sourceRoot = getVersionedSourceRoot(vFile) ?: return
 
     val rel = try {
         PathUtil.relativize(Paths.get(sourceRoot.path), Paths.get(vFile.path))
     } catch (_: Exception) { return }
+
+    val writtenFiles = mutableListOf<File>()
 
     // Update own patchedSrc if this is itself a patched version module.
     val ownConfig = EngineConfigCache.forModuleRoot(moduleRoot)
@@ -42,7 +46,7 @@ internal fun updatePatchedSrcWithCascade(vFile: VirtualFile, content: String) {
             map.patchFile(rel, result.originEntries)
             map.toFile(File(ownConfig.originMapFile))
         } catch (_: Exception) { }
-        VfsUtil.findFileByIoFile(File(ownConfig.patchedOutDir, rel), true)
+        writtenFiles.add(outFile)
     }
 
     // Cascade to all later version modules (sorted oldest-to-newest so each step's
@@ -71,8 +75,10 @@ internal fun updatePatchedSrcWithCascade(vFile: VirtualFile, content: String) {
             map.patchFile(rel, result.originEntries)
             map.toFile(File(downConfig.originMapFile))
         } catch (_: Exception) { }
-        VfsUtil.findFileByIoFile(outFile, true)
+        writtenFiles.add(outFile)
     }
+
+    refreshAndRestartAnalysis(writtenFiles, project)
 }
 
 /**
@@ -80,17 +86,17 @@ internal fun updatePatchedSrcWithCascade(vFile: VirtualFile, content: String) {
  * Delegates entirely to the merge engine for each version: if the overlay is absent the engine
  * copies the base verbatim; if the base is also absent it deletes the patchedSrc output.
  */
-internal fun updatePatchedSrcForDeletion(deletedFilePath: String) {
+internal fun updatePatchedSrcForDeletion(deletedFilePath: String, project: Project? = null) {
     val normalized = deletedFilePath.replace('\\', '/')
-    val marker = "/${PathUtil.TRUE_SRC_MARKER}/"
-    val markerIdx = normalized.indexOf(marker)
-    if (markerIdx < 0) return
+    val pathInfo = parseTrueSrcPath(normalized) ?: return
 
-    val moduleRootPath = normalized.substring(0, markerIdx)
-    val rel = normalized.substring(markerIdx + marker.length)
+    val moduleRootPath = pathInfo.moduleRootPath
+    val rel = pathInfo.relClassPath
 
     val moduleRoot = LocalFileSystem.getInstance().findFileByPath(moduleRootPath) ?: return
     if (!moduleRoot.isDirectory) return
+
+    val writtenFiles = mutableListOf<File>()
 
     val ownConfig = EngineConfigCache.forModuleRoot(moduleRoot)
     if (ownConfig != null) {
@@ -103,6 +109,7 @@ internal fun updatePatchedSrcForDeletion(deletedFilePath: String) {
                 loadBaseOriginMap(ownConfig)
             )
         } catch (_: Exception) { }
+        writtenFiles.add(File(ownConfig.patchedOutDir, rel))
     }
 
     for (downstreamRoot in findLaterVersionModuleRoots(moduleRoot)) {
@@ -116,7 +123,10 @@ internal fun updatePatchedSrcForDeletion(deletedFilePath: String) {
                 loadBaseOriginMap(downConfig)
             )
         } catch (_: Exception) { }
+        writtenFiles.add(File(downConfig.patchedOutDir, rel))
     }
+
+    refreshAndRestartAnalysis(writtenFiles, project)
 }
 
 /**
@@ -126,10 +136,28 @@ internal fun updatePatchedSrcForDeletion(deletedFilePath: String) {
  */
 private fun loadBaseOriginMap(config: EngineConfig): OriginMap? {
     val baseDir = File(config.baseDir)
-    if (!baseDir.path.replace('\\', '/').contains("/${PathUtil.PATCHED_SRC_DIR}/")) return null
-    val patchedSrcRoot = baseDir.path.replace('\\', '/').substringBeforeLast("/${PathUtil.JAVA_SRC_SUBDIR}")
+    val normalizedBase = baseDir.path.replace('\\', '/')
+    if (!isInPatchedSrc(normalizedBase)) return null
+    val patchedSrcRoot = patchedSrcRoot(normalizedBase) ?: return null
     val mapFile = File(patchedSrcRoot, PathUtil.ORIGIN_MAP_FILENAME)
     return if (mapFile.exists()) OriginMap.fromFile(mapFile) else null
+}
+
+/**
+ * Refreshes the VFS for all written patchedSrc files and restarts the daemon code analyzer
+ * so that open editors re-run inspections, code vision, and highlighting against the new content.
+ */
+private fun refreshAndRestartAnalysis(writtenFiles: List<File>, project: Project?) {
+    if (writtenFiles.isEmpty()) return
+    LocalFileSystem.getInstance().refreshIoFiles(writtenFiles, true, false) {
+        if (project != null && !project.isDisposed) {
+            ApplicationManager.getApplication().invokeLater({
+                if (!project.isDisposed) {
+                    DaemonCodeAnalyzer.getInstance(project).restart()
+                }
+            }, project.disposed)
+        }
+    }
 }
 
 private fun readFileOrNull(file: File): String? =

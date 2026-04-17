@@ -43,11 +43,23 @@
         </option>
       </GradleProjectSettings>
       <GradleProjectSettings>
+        <compositeConfiguration>
+          <compositeBuild compositeDefinitionSource="SCRIPT">
+            <builds>
+              <build path="$PROJECT_DIR$/merge-engine" name="multiversion-merge-engine">
+                <projects>
+                  <project path="$PROJECT_DIR$/merge-engine" />
+                </projects>
+              </build>
+            </builds>
+          </compositeBuild>
+        </compositeConfiguration>
         <option name="externalProjectPath" value="$PROJECT_DIR$/main-gradle" />
         <option name="gradleJvm" value="#JAVA_HOME" />
         <option name="modules">
           <set>
             <option value="$PROJECT_DIR$/main-gradle" />
+            <option value="$PROJECT_DIR$/merge-engine" />
           </set>
         </option>
       </GradleProjectSettings>
@@ -79,6 +91,11 @@
                   <project path="$PROJECT_DIR$/settings-gradle" />
                 </projects>
               </build>
+              <build path="$PROJECT_DIR$/shared-gradle-api" name="shared-gradle-api">
+                <projects>
+                  <project path="$PROJECT_DIR$/shared-gradle-api" />
+                </projects>
+              </build>
             </builds>
           </compositeBuild>
         </compositeConfiguration>
@@ -97,7 +114,12 @@
             <option value="$PROJECT_DIR$/mod-template/1.21.1/common" />
             <option value="$PROJECT_DIR$/mod-template/1.21.1/fabric" />
             <option value="$PROJECT_DIR$/mod-template/1.21.1/neoforge" />
+            <option value="$PROJECT_DIR$/mod-template/1.21.11" />
+            <option value="$PROJECT_DIR$/mod-template/1.21.11/common" />
+            <option value="$PROJECT_DIR$/mod-template/1.21.11/fabric" />
+            <option value="$PROJECT_DIR$/mod-template/1.21.11/neoforge" />
             <option value="$PROJECT_DIR$/settings-gradle" />
+            <option value="$PROJECT_DIR$/shared-gradle-api" />
           </set>
         </option>
       </GradleProjectSettings>
@@ -107,6 +129,15 @@
         <option name="modules">
           <set>
             <option value="$PROJECT_DIR$/settings-gradle" />
+          </set>
+        </option>
+      </GradleProjectSettings>
+      <GradleProjectSettings>
+        <option name="externalProjectPath" value="$PROJECT_DIR$/shared-gradle-api" />
+        <option name="gradleJvm" value="#JAVA_HOME" />
+        <option name="modules">
+          <set>
+            <option value="$PROJECT_DIR$/shared-gradle-api" />
           </set>
         </option>
       </GradleProjectSettings>

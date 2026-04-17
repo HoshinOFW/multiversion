@@ -1,10 +1,34 @@
-<h2>0.5.6</h2>
+<h2>0.6.1</h2>
 <ul>
+  <li><strong>BUG FIX</strong> PatchedSrc changes now properly trigger re-analysis of dependent files in open editors, including downstream versions</li>
+  <li><strong>Performance</strong> Gutter icon override detection now uses origin map lookups instead of opening PSI files across all versions</li>
+  <li><code>EngineConfigCache</code> now exposes origin maps per module using the engine's <code>CachedOriginMap</code></li>
+  <li>Deduplicated path extraction, PSI file opening, and member matching code across the plugin</li>
+  <li><strong>Navigation rebuilt on origin map</strong> Gutter arrows, Alt+Shift+W/S shortcuts, and the Alt+Shift+V popup all gate on and walk through the engine's <code>OriginNavigation</code> walker. Up/down arrows now appear if and only if the tracked member or class has a trueSrc version in that direction, at any distance, following <code>@ModifySignature</code> rename chains</li>
+  <li><strong>Alt+Shift+V popup</strong> Shows every version with labels derived directly from the origin map flag set (e.g. <code>@ShadowVersion @ModifySignature</code>). Annotation tokens render bold in the editor's annotation colour (theme-aware). Inherited and absent entries are greyed out. Class-level entries show the trueSrc filename (future-proofed for <code>@ModifyClass</code>) instead of a generic label. Inherited entries are non-clickable for now</li>
+  <li><strong>Base-version synthesis</strong> Navigation walks and the Alt+Shift+V popup now work on the project's base version (oldest) even though it has no generated origin map; the IDE synthesises one in memory from the trueSrc directory</li>
+  <li><strong>BUG FIX</strong> <em>Add @OverwriteVersion</em> / <em>Add @ShadowVersion</em> / <em>Replace @ShadowVersion with @OverwriteVersion</em> / <em>Add original annotations</em> quick fixes now add the necessary imports if they are missing</li>
+  <li><strong>BUG FIX</strong> <em>Missing method body, or declare abstract</em> error is now suppressed when the method matches a member in the previous version, so the <em>Add @ShadowVersion</em> quick fix is the only one offered on bodyless multiversion stubs</li>
+  <li>Deleted navigation-only helpers from <code>VersionMemberUtil</code> (<code>hasAdjacentVersion</code>, <code>findAdjacentVersionClass</code>, <code>findAllVersionClasses</code>, <code>findAllVersionsOfMember</code>, <code>walkUpstream</code>/<code>walkDownstream</code>, <code>isOverriddenDownstream</code>); IDE navigation is now a thin adapter over the engine walker</li>
+</ul>
+
+<h2>0.6.0</h2>
+<ul>
+  <li><strong>Version navigation</strong> Alt+Shift+W/S to jump upstream/downstream versions; context-sensitive (navigates the member at cursor, or the class). Replaces the current tab in-place.</li>
+  <li><strong>All-versions popup</strong> Alt+Shift+V shows every version of the current member or class with status labels, click to navigate.</li>
+  <li><strong>Gutter icons</strong> Up/down arrows on annotated members, members overridden downstream, and versioned class declarations for quick navigation.</li>
+  <li>Centralized version directory scanning, member resolution, and path classification utilities across the plugin.</li>
+  <li><strong>Missing explicit annotation inspection</strong> Errors when a member exists in the original class but has no <code>@OverwriteVersion</code> or <code>@ShadowVersion</code>, with a quick fix to add the appropriate one</li>
+  <li><strong>@ModifySignature collision detection</strong> Errors when the new member name already exists in the original class as a different member</li>
+  <li><strong>Missing original annotations inspection</strong> Warns when <code>@OverwriteVersion</code> or <code>@ShadowVersion</code> members are missing annotations present on the original member, with a quick fix to add them</li>
+  <li><strong>BUG FIX</strong> <code>@NotNull</code> <code>@ShadowVersion</code> fields no longer show a spurious "must be initialized" warning</li>
   <li>Config parsing now uses engine's shared <code>EngineConfig.fromJson()</code> instead of a local regex parser</li>
   <li>Origin map caching now delegates to engine's <code>CachedOriginMap</code></li>
-  <li>Replaced manual type simplification with <code>MemberDescriptor.simpleTypeName()</code></li>
-  <li>Replaced manual path relativization with <code>PathUtil.relativize()</code></li>
   <li>Descriptor resolution now uses engine's shared <code>MemberDescriptor</code> utilities (parsing, init disambiguation, param matching)</li>
+  <li><strong>BUG FIX</strong> <code>@ModifySignature</code> with a method body but no <code>@OverwriteVersion</code> now correctly shows an error suggesting <code>@OverwriteVersion</code></li>
+  <li><strong>@ShadowVersion body warning</strong> <code>@ShadowVersion</code> methods or fields with a body now show a warning with quick fixes to replace with <code>@OverwriteVersion</code> or remove the body</li>
+  <li><strong>BUG FIX</strong> "Missing explicit annotation" inspection now correctly suggests <code>@OverwriteVersion</code> for fields with initializers (previously always suggested <code>@ShadowVersion</code> for fields)</li>
+  <li>Some refactoring for future maintenance</li>
 </ul>
 
 <h2>0.5.5</h2>

@@ -213,10 +213,14 @@ class GeneralUtil {
         }
     }
 
-    // ---- private helpers ----
 
     static MultiversionModulesExtension modulesExt(Project p) {
-        p.rootProject.extensions.findByType(MultiversionModulesExtension)
+        // Try the settings-phase extension first (stored on gradle.ext by the settings plugin),
+        // then fall back to a root-project-level extension for legacy setups.
+        if (p.gradle.ext.has("multiversionModules")) {
+            return p.gradle.ext.get("multiversionModules") as MultiversionModulesExtension
+        }
+        return p.rootProject.extensions.findByType(MultiversionModulesExtension)
     }
 
     static MultiversionConfigurationExtension configExt(Project p) {

@@ -9,17 +9,22 @@ import com.intellij.psi.*
 import com.intellij.psi.util.PsiTreeUtil
 import java.io.File
 
-private val VERSION_REGEX = Regex("/(${VersionUtil.VERSION_PATTERN.pattern})/")
+internal val VERSION_REGEX = Regex("/(${VersionUtil.VERSION_PATTERN.pattern})/")
 
-// -- Previous version class resolution ----------------------------------------
+// -- Annotation FQN constants -------------------------------------------------
+
+const val OVERWRITE_FQN = "com.github.hoshinofw.multiversion.OverwriteVersion"
+const val SHADOW_FQN = "com.github.hoshinofw.multiversion.ShadowVersion"
+const val MODIFY_SIGNATURE_FQN = "com.github.hoshinofw.multiversion.ModifySignature"
+
+// -- Version directory scanning -------------------------------------------------
 
 /**
- * Finds the class from the previous version that corresponds to [psiClass].
- * Looks in patchedSrc first (contains all inherited members), falls back to trueSrc.
+ * Parses a file path to extract the current version string and the sorted list of
+ * version directories in the project. Returns null if the file is not in a versioned module.
  */
-fun findPreviousVersionClass(psiClass: PsiClass): PsiClass? {
-    val file = psiClass.containingFile?.virtualFile ?: return null
-    val normPath = file.path.replace('\\', '/')
+internal fun resolveVersionContext(filePath: String): VersionContext? {
+    val normPath = filePath.replace('\\', '/')
     val match = VERSION_REGEX.find(normPath) ?: return null
     val currentVersion = match.groupValues[1]
 
@@ -30,24 +35,69 @@ fun findPreviousVersionClass(psiClass: PsiClass): PsiClass? {
     }?.sortedWith { a, b -> VersionUtil.compareVersions(a.name, b.name) } ?: return null
 
     val currentIdx = versionDirs.indexOfFirst { it.name == currentVersion }
-    if (currentIdx <= 0) return null
-    val prevVersion = versionDirs[currentIdx - 1]
+    if (currentIdx < 0) return null
 
-    val versionSuffix = "/${currentVersion}/"
-    val afterVersion  = normPath.substring(normPath.indexOf(versionSuffix) + versionSuffix.length)
+    return VersionContext(normPath, currentVersion, currentIdx, versionDirs)
+}
+
+public data class VersionContext(
+    val normPath: String,
+    val currentVersion: String,
+    val currentIdx: Int,
+    val versionDirs: List<File>,
+)
+
+/**
+ * Extracts the module name and relative class path from a versioned file path.
+ * Returns null if the path doesn't contain a trueSrc marker.
+ */
+internal fun parseVersionedFileInfo(filePath: String, ctx: VersionContext): VersionedFileInfo? {
     val trueSrcMarker = "/${PathUtil.TRUE_SRC_MARKER}/"
-    val moduleName    = afterVersion.substringBefore(trueSrcMarker)
-
-    val srcMainJavaIdx = normPath.indexOf(trueSrcMarker)
+    val srcMainJavaIdx = ctx.normPath.indexOf(trueSrcMarker)
     if (srcMainJavaIdx < 0) return null
-    val relClassPath = normPath.substring(srcMainJavaIdx + trueSrcMarker.length)
+    val versionSuffix = "/${ctx.currentVersion}/"
+    val afterVersion = ctx.normPath.substring(ctx.normPath.indexOf(versionSuffix) + versionSuffix.length)
+    return VersionedFileInfo(
+        moduleName = afterVersion.substringBefore(trueSrcMarker),
+        relClassPath = ctx.normPath.substring(srcMainJavaIdx + trueSrcMarker.length),
+    )
+}
 
-    val patchedFile = File(prevVersion, "$moduleName/${PathUtil.PATCHED_SRC_DIR}/${PathUtil.JAVA_SRC_SUBDIR}/$relClassPath")
-    val srcFile = File(prevVersion, "$moduleName/${PathUtil.TRUE_SRC_MARKER}/$relClassPath")
-    val prevIoFile = if (patchedFile.exists()) patchedFile else srcFile
-    val prevVf = LocalFileSystem.getInstance().findFileByIoFile(prevIoFile) ?: return null
-    val prevPsiFile = PsiManager.getInstance(psiClass.project).findFile(prevVf) ?: return null
-    return PsiTreeUtil.findChildOfType(prevPsiFile, PsiClass::class.java)
+internal data class VersionedFileInfo(
+    val moduleName: String,
+    val relClassPath: String,
+)
+
+/**
+ * Opens a Java file and returns the first top-level PsiClass, or null.
+ */
+internal fun openPsiClass(file: File, project: com.intellij.openapi.project.Project): PsiClass? {
+    val vf = LocalFileSystem.getInstance().findFileByIoFile(file) ?: return null
+    val psiFile = PsiManager.getInstance(project).findFile(vf) ?: return null
+    return PsiTreeUtil.findChildOfType(psiFile, PsiClass::class.java)
+}
+
+// -- Single-step class resolution (used by inspections, not navigation) --------
+
+/**
+ * Finds the class from the previous version that corresponds to [psiClass].
+ * Only returns trueSrc classes, skipping versions where the class is only inherited.
+ *
+ * Used by inspections that need the immediate upstream class. Navigation features
+ * should consult [OriginNavigation] via [buildNavigationContext] instead.
+ */
+fun findPreviousVersionClass(psiClass: PsiClass): PsiClass? {
+    val file = psiClass.containingFile?.virtualFile ?: return null
+    val ctx = resolveVersionContext(file.path) ?: return null
+    val info = parseVersionedFileInfo(file.path, ctx) ?: return null
+
+    var idx = ctx.currentIdx - 1
+    while (idx >= 0) {
+        val srcFile = File(ctx.versionDirs[idx], "${info.moduleName}/${PathUtil.TRUE_SRC_MARKER}/${info.relClassPath}")
+        if (srcFile.exists()) return openPsiClass(srcFile, psiClass.project)
+        idx--
+    }
+    return null
 }
 
 // -- Member matching ----------------------------------------------------------

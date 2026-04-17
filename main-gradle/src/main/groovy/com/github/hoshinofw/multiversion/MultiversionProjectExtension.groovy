@@ -31,8 +31,28 @@ class MultiversionProjectExtension {
 
     private final Project project
 
+    /** Internal storage for wireTask declarations (only meaningful on rootProject). */
+    List<Map<String, Object>> _wiredTasks = []
+
     MultiversionProjectExtension(Project project) {
         this.project = project
+    }
+
+    /**
+     * Wires all {@code :mc_version:module:taskName} into a single root-level {@code :taskName}.
+     * If a versioned subproject does not have the task, it is silently skipped.
+     *
+     * <p>Call this on the root project's {@code multiversion} extension in build.gradle:
+     * <pre>
+     * multiversion.wireTask 'runClient'
+     * multiversion.wireTask 'remapJar', { Project p -> p.name == 'fabric' }
+     * </pre>
+     *
+     * @param taskName The task name to aggregate.
+     * @param filter   Optional filter closure ({@code Project -> boolean}). Only matching subprojects are wired.
+     */
+    void wireTask(String taskName, Closure<Boolean> filter = null) {
+        _wiredTasks.add([taskName: taskName, filter: filter])
     }
 
     /** Returns the module name (the project's directory name, e.g. {@code "fabric"}, {@code "fabric-custom"}). */

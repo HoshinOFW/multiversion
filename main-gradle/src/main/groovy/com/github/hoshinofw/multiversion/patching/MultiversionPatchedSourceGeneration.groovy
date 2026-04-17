@@ -106,10 +106,11 @@ class MultiversionPatchedSourceGeneration {
             relResByVer[v]  = PatchingUtil.relFileSet(verToProj[v].file("src/main/resources"))
         }
 
-        // Resource patch configs (multiversion-resources.json) per version
+        // Resource patch configs per version
+        String resConfigFilename = GeneralUtil.configExt(root)?.resourcesConfigPath ?: ResourcePatchConfig.DEFAULT_FILENAME
         Map<String, ResourcePatchConfig> resPatchByVer = [:]
         versions.each { v ->
-            resPatchByVer[v] = ResourcePatchConfig.fromDirectory(verToProj[v].file("src/main/resources"))
+            resPatchByVer[v] = ResourcePatchConfig.fromDirectory(verToProj[v].file("src/main/resources"), resConfigFilename)
         }
 
         // Build patchedSrc for each version after the first
@@ -277,7 +278,7 @@ class MultiversionPatchedSourceGeneration {
                             into(outResDir)
 
                             // Exclude the resource patch config; it is a build-time instruction, not a mod resource
-                            exclude("multiversion-resources.json")
+                            exclude(resConfigFilename)
 
                             // 0) root-level shared resources for this module (optional)
                             if (sharedRes.exists()) {

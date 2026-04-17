@@ -105,10 +105,7 @@ internal object True2PatchMergeEngine {
         }
 
         if (originMap != null && result.originEntries.isNotEmpty()) {
-            result.originEntries.forEach { line ->
-                val tab = line.indexOf('\t')
-                if (tab > 0) originMap.put(line.substring(0, tab), line.substring(tab + 1))
-            }
+            originMap.addEntries(result.originEntries)
         }
     }
 
@@ -149,18 +146,26 @@ internal object True2PatchMergeEngine {
         }
 
         if (baseContent == null) {
-            // Brand-new class with no base counterpart
+            // Brand-new class with no base counterpart: every member is a new declaration.
             val origins = mutableListOf<String>()
-            collectNonAnnotatedOrigins(currentCls, rel, currentSrcRelRoot, origins)
-            origins.add(0, "$rel\t$currentSrcRelRoot/$rel")
+            collectNonAnnotatedOrigins(
+                currentCls, rel, currentSrcRelRoot, origins,
+                memberFlags = java.util.EnumSet.of(OriginFlag.TRUESRC, OriginFlag.NEW),
+            )
+            origins.add(0, "$rel\t$currentSrcRelRoot/$rel\t${OriginFlag.TRUESRC.token}")
             return MergeResult(currentContent, origins, MergeAction.COPIED_CURRENT)
         }
 
         if (!hasTriggers(currentCls)) {
-            // currentContent is the authoritative content for this version layer
+            // currentContent is the authoritative content for this version layer. Per-member
+            // annotation info is unknown here (the engine intentionally skips base parsing),
+            // so we emit TRUESRC-only on members.
             val origins = mutableListOf<String>()
-            collectNonAnnotatedOrigins(currentCls, rel, currentSrcRelRoot, origins)
-            origins.add(0, "$rel\t$currentSrcRelRoot/$rel")
+            collectNonAnnotatedOrigins(
+                currentCls, rel, currentSrcRelRoot, origins,
+                memberFlags = setOf(OriginFlag.TRUESRC),
+            )
+            origins.add(0, "$rel\t$currentSrcRelRoot/$rel\t${OriginFlag.TRUESRC.token}")
             return MergeResult(currentContent, origins, MergeAction.COPIED_CURRENT)
         }
 
@@ -189,7 +194,7 @@ internal object True2PatchMergeEngine {
         val mergedContent = PrettyPrinter().print(baseCU)
 
         // File-level entry: current version owns this file (it has merge triggers)
-        origins.add(0, "$rel\t$currentSrcRelRoot/$rel")
+        origins.add(0, "$rel\t$currentSrcRelRoot/$rel\t${OriginFlag.TRUESRC.token}")
 
         return MergeResult(mergedContent, origins, MergeAction.MERGED)
     }
@@ -209,6 +214,8 @@ internal object True2PatchMergeEngine {
         val methodOrigins = modifiedSignatureOrigins.methods.toMutableMap()
         val fieldOrigins = modifiedSignatureOrigins.fields.toMutableMap()
         val constructorOrigins = modifiedSignatureOrigins.constructors.toMutableMap()
+        val renames = modifiedSignatureOrigins.renames
+        val memberFlags = modifiedSignatureOrigins.memberFlags.toMutableMap()
 
         currentCls.methods.forEach { method ->
             // Already processed by applyModifySignatures
@@ -227,6 +234,7 @@ internal object True2PatchMergeEngine {
                 if (!baseMethod.getAnnotationByName("ShadowVersion").isPresent) {
                     baseMethod.addMarkerAnnotation("ShadowVersion")
                 }
+                memberFlags[desc] = java.util.EnumSet.of(OriginFlag.TRUESRC, OriginFlag.SHADOW)
                 return@forEach
             }
 
@@ -243,12 +251,14 @@ internal object True2PatchMergeEngine {
                     mParams, method.nameAsString, rel
                 ) as MethodDeclaration
                 baseCls.members[baseCls.members.indexOf(target)] = method.clone()
-                methodOrigins[desc] = posStr(method)
+                methodOrigins[desc] = OriginSource(posStr(method), true)
+                memberFlags[desc] = java.util.EnumSet.of(OriginFlag.TRUESRC, OriginFlag.OVERWRITE)
             } else if (inBase) {
                 throw MergeException("Method '$desc' exists in both versions of $rel without @OverwriteVersion or @ShadowVersion. Annotate it explicitly")
             } else {
                 baseCls.addMember(method.clone())
-                methodOrigins[desc] = posStr(method)
+                methodOrigins[desc] = OriginSource(posStr(method), true)
+                memberFlags[desc] = java.util.EnumSet.of(OriginFlag.TRUESRC, OriginFlag.NEW)
             }
         }
 
@@ -265,6 +275,7 @@ internal object True2PatchMergeEngine {
                 if (!baseField.getAnnotationByName("ShadowVersion").isPresent) {
                     baseField.addMarkerAnnotation("ShadowVersion")
                 }
+                memberFlags[fName] = java.util.EnumSet.of(OriginFlag.TRUESRC, OriginFlag.SHADOW)
                 return@forEach
             }
 
@@ -272,10 +283,12 @@ internal object True2PatchMergeEngine {
                 if (!inBase) throw MergeException("@OverwriteVersion on field '$fName' not found in base for $rel")
                 val target = baseCls.fields.first { bf -> bf.variables.any { it.nameAsString == fName } }
                 baseCls.members[baseCls.members.indexOf(target)] = field.clone()
-                fieldOrigins[fName] = posStr(field)
+                fieldOrigins[fName] = OriginSource(posStr(field), true)
+                memberFlags[fName] = java.util.EnumSet.of(OriginFlag.TRUESRC, OriginFlag.OVERWRITE)
             } else if (!inBase) {
                 baseCls.addMember(field.clone())
-                fieldOrigins[fName] = posStr(field)
+                fieldOrigins[fName] = OriginSource(posStr(field), true)
+                memberFlags[fName] = java.util.EnumSet.of(OriginFlag.TRUESRC, OriginFlag.NEW)
             } else {
                 throw MergeException("Field '$fName' exists in both versions of $rel without @OverwriteVersion or @ShadowVersion")
             }
@@ -295,6 +308,7 @@ internal object True2PatchMergeEngine {
                 if (!baseCtor.getAnnotationByName("ShadowVersion").isPresent) {
                     baseCtor.addMarkerAnnotation("ShadowVersion")
                 }
+                memberFlags[desc] = java.util.EnumSet.of(OriginFlag.TRUESRC, OriginFlag.SHADOW)
                 return@forEach
             }
 
@@ -302,54 +316,81 @@ internal object True2PatchMergeEngine {
                 if (!inBase) throw MergeException("@OverwriteVersion: constructor '$desc' not found in base for $rel")
                 val target = findByParams(getTypeConstructors(baseCls), mParams, "init", rel) as ConstructorDeclaration
                 baseCls.members[baseCls.members.indexOf(target)] = ctor.clone()
-                constructorOrigins[desc] = posStr(ctor)
+                constructorOrigins[desc] = OriginSource(posStr(ctor), true)
+                memberFlags[desc] = java.util.EnumSet.of(OriginFlag.TRUESRC, OriginFlag.OVERWRITE)
             } else if (inBase) {
                 throw MergeException("Constructor '$desc' exists in both versions of $rel without @OverwriteVersion or @ShadowVersion. Annotate it explicitly")
             } else {
                 baseCls.addMember(ctor.clone())
-                constructorOrigins[desc] = posStr(ctor)
+                constructorOrigins[desc] = OriginSource(posStr(ctor), true)
+                memberFlags[desc] = java.util.EnumSet.of(OriginFlag.TRUESRC, OriginFlag.NEW)
             }
         }
 
         baseCls.methods.forEach { m ->
             val desc = descriptor(m)
-            if (methodOrigins.containsKey(desc)) {
-                originEntries.add("$rel#$desc\t$currentSrcRelRoot/$rel:${methodOrigins[desc]!!}")
-            } else {
-                val inherited = baseOriginMap?.getMember(rel, desc)
-                if (inherited != null) {
-                    originEntries.add("$rel#$desc\t$inherited")
-                } else {
-                    originEntries.add("$rel#$desc\t$baseRelRoot/$rel:${posStr(m)}")
-                }
-            }
+            emitMemberOrigin(
+                rel, desc, methodOrigins[desc], renames[desc],
+                currentSrcRelRoot, baseRelRoot, m, baseOriginMap, memberFlags[desc], originEntries
+            )
         }
         getTypeConstructors(baseCls).forEach { c ->
             val desc = constructorDescriptor(c)
-            if (constructorOrigins.containsKey(desc)) {
-                originEntries.add("$rel#$desc\t$currentSrcRelRoot/$rel:${constructorOrigins[desc]!!}")
-            } else {
-                val inherited = baseOriginMap?.getMember(rel, desc)
-                if (inherited != null) {
-                    originEntries.add("$rel#$desc\t$inherited")
-                } else {
-                    originEntries.add("$rel#$desc\t$baseRelRoot/$rel:${posStr(c)}")
-                }
-            }
+            emitMemberOrigin(
+                rel, desc, constructorOrigins[desc], renames[desc],
+                currentSrcRelRoot, baseRelRoot, c, baseOriginMap, memberFlags[desc], originEntries
+            )
         }
         baseCls.fields.forEach { f ->
             val fName = f.variables[0].nameAsString
-            if (fieldOrigins.containsKey(fName)) {
-                originEntries.add("$rel#$fName\t$currentSrcRelRoot/$rel:${fieldOrigins[fName]!!}")
-            } else {
-                val inherited = baseOriginMap?.getMember(rel, fName)
-                if (inherited != null) {
-                    originEntries.add("$rel#$fName\t$inherited")
-                } else {
-                    originEntries.add("$rel#$fName\t$baseRelRoot/$rel:${posStr(f)}")
-                }
+            emitMemberOrigin(
+                rel, fName, fieldOrigins[fName], renames[fName],
+                currentSrcRelRoot, baseRelRoot, f, baseOriginMap, memberFlags[fName], originEntries
+            )
+        }
+
+        // Write rename tracking entries for @ModifySignature members.
+        // These enable version walking across renames without opening PSI files.
+        for ((newDesc, oldDesc) in renames) {
+            originEntries.add("$rel#!rename#$newDesc\t$oldDesc")   // forward: new -> old (upstream walk)
+            originEntries.add("$rel#!renamed#$oldDesc\t$newDesc")  // reverse: old -> new (downstream walk)
+        }
+    }
+
+    /**
+     * Writes a single member-level origin TSV line. Handles three cases:
+     * 1. [origin] non-null and [OriginSource.bodyFromCurrent] true: body lives in currentSrcRelRoot.
+     * 2. [origin] non-null and bodyFromCurrent false (@ModifySignature without @OverwriteVersion):
+     *    body was inherited. Look up the old descriptor (via [lookupDescForInherit]) in baseOriginMap
+     *    to find where the body actually lives, falling back to baseRelRoot.
+     * 3. [origin] null (member was not touched by current trueSrc): inherit from baseOriginMap
+     *    or fall back to the base node position in baseRelRoot.
+     *
+     * Appends [flags] as space-separated tokens when non-empty.
+     */
+    private fun emitMemberOrigin(
+        rel: String,
+        desc: String,
+        origin: OriginSource?,
+        lookupDescForInherit: String?,
+        currentSrcRelRoot: String,
+        baseRelRoot: String,
+        baseNode: com.github.javaparser.ast.Node,
+        baseOriginMap: OriginMap?,
+        flags: Set<OriginFlag>?,
+        originEntries: MutableList<String>,
+    ) {
+        val value = when {
+            origin != null && origin.bodyFromCurrent -> "$currentSrcRelRoot/$rel:${origin.pos}"
+            else -> {
+                val lookupDesc = lookupDescForInherit ?: desc
+                baseOriginMap?.getMember(rel, lookupDesc)
+                    ?: "$baseRelRoot/$rel:${posStr(baseNode)}"
             }
         }
+        val flagStr = if (flags.isNullOrEmpty()) "" else OriginFlag.formatFlags(flags)
+        val line = if (flagStr.isEmpty()) "$rel#$desc\t$value" else "$rel#$desc\t$value\t$flagStr"
+        originEntries.add(line)
     }
 
     // ---- Enum constant merging ----
@@ -368,6 +409,7 @@ internal object True2PatchMergeEngine {
         if (currentEntries.isEmpty() && baseEntries.isEmpty()) return
 
         val enumConstantOrigins = mutableMapOf<String, String>()
+        val memberFlags = mutableMapOf<String, Set<OriginFlag>>()
 
         currentEntries.forEach { entry ->
             val cName  = entry.nameAsString
@@ -379,6 +421,7 @@ internal object True2PatchMergeEngine {
                 if (!baseEntry.getAnnotationByName("ShadowVersion").isPresent) {
                     baseEntry.addMarkerAnnotation("ShadowVersion")
                 }
+                memberFlags[cName] = java.util.EnumSet.of(OriginFlag.TRUESRC, OriginFlag.SHADOW)
                 return@forEach
             }
 
@@ -387,26 +430,27 @@ internal object True2PatchMergeEngine {
                 val target = baseEntries.first { it.nameAsString == cName }
                 baseEntries[baseEntries.indexOf(target)] = entry.clone()
                 enumConstantOrigins[cName] = posStr(entry)
+                memberFlags[cName] = java.util.EnumSet.of(OriginFlag.TRUESRC, OriginFlag.OVERWRITE)
             } else if (inBase) {
                 throw MergeException("Enum constant '$cName' exists in both versions of $rel without @OverwriteVersion or @ShadowVersion")
             } else {
                 baseEntries.add(entry.clone())
                 enumConstantOrigins[cName] = posStr(entry)
+                memberFlags[cName] = java.util.EnumSet.of(OriginFlag.TRUESRC, OriginFlag.NEW)
             }
         }
 
         baseEntries.forEach { e ->
             val cName = e.nameAsString
-            if (enumConstantOrigins.containsKey(cName)) {
-                originEntries.add("$rel#$cName\t$currentSrcRelRoot/$rel:${enumConstantOrigins[cName]!!}")
+            val value = if (enumConstantOrigins.containsKey(cName)) {
+                "$currentSrcRelRoot/$rel:${enumConstantOrigins[cName]!!}"
             } else {
-                val inherited = baseOriginMap?.getMember(rel, cName)
-                if (inherited != null) {
-                    originEntries.add("$rel#$cName\t$inherited")
-                } else {
-                    originEntries.add("$rel#$cName\t$baseRelRoot/$rel:${posStr(e)}")
-                }
+                baseOriginMap?.getMember(rel, cName) ?: "$baseRelRoot/$rel:${posStr(e)}"
             }
+            val flags = memberFlags[cName]
+            val line = if (flags.isNullOrEmpty()) "$rel#$cName\t$value"
+                       else "$rel#$cName\t$value\t${OriginFlag.formatFlags(flags)}"
+            originEntries.add(line)
         }
     }
 
@@ -426,6 +470,7 @@ internal object True2PatchMergeEngine {
         if (currentMembers.isEmpty() && baseMembers.isEmpty()) return
 
         val annotationMemberOrigins = mutableMapOf<String, String>()
+        val memberFlags = mutableMapOf<String, Set<OriginFlag>>()
 
         currentMembers.forEach { member ->
             val mName  = member.nameAsString
@@ -437,6 +482,7 @@ internal object True2PatchMergeEngine {
                 if (!baseMember.getAnnotationByName("ShadowVersion").isPresent) {
                     baseMember.addMarkerAnnotation("ShadowVersion")
                 }
+                memberFlags[mName] = java.util.EnumSet.of(OriginFlag.TRUESRC, OriginFlag.SHADOW)
                 return@forEach
             }
 
@@ -445,34 +491,35 @@ internal object True2PatchMergeEngine {
                 val target = baseMembers.first { it.nameAsString == mName }
                 baseCls.members[baseCls.members.indexOf(target)] = member.clone()
                 annotationMemberOrigins[mName] = posStr(member)
+                memberFlags[mName] = java.util.EnumSet.of(OriginFlag.TRUESRC, OriginFlag.OVERWRITE)
             } else if (inBase) {
                 throw MergeException("Annotation member '$mName()' exists in both versions of $rel without @OverwriteVersion or @ShadowVersion")
             } else {
                 baseCls.addMember(member.clone())
                 annotationMemberOrigins[mName] = posStr(member)
+                memberFlags[mName] = java.util.EnumSet.of(OriginFlag.TRUESRC, OriginFlag.NEW)
             }
         }
 
         getAnnotationMembers(baseCls).forEach { m ->
             val mName = m.nameAsString
             val key = "$mName()"
-            if (annotationMemberOrigins.containsKey(mName)) {
-                originEntries.add("$rel#$key\t$currentSrcRelRoot/$rel:${annotationMemberOrigins[mName]!!}")
+            val value = if (annotationMemberOrigins.containsKey(mName)) {
+                "$currentSrcRelRoot/$rel:${annotationMemberOrigins[mName]!!}"
             } else {
-                val inherited = baseOriginMap?.getMember(rel, key)
-                if (inherited != null) {
-                    originEntries.add("$rel#$key\t$inherited")
-                } else {
-                    originEntries.add("$rel#$key\t$baseRelRoot/$rel:${posStr(m)}")
-                }
+                baseOriginMap?.getMember(rel, key) ?: "$baseRelRoot/$rel:${posStr(m)}"
             }
+            val flags = memberFlags[mName]
+            val line = if (flags.isNullOrEmpty()) "$rel#$key\t$value"
+                       else "$rel#$key\t$value\t${OriginFlag.formatFlags(flags)}"
+            originEntries.add(line)
         }
     }
 
     // ---- Inheritance merging ----
 
     private fun mergeInheritance(currentCls: TypeDeclaration<*>, baseCls: TypeDeclaration<*>) {
-        if (!currentCls.getAnnotationByName("OverwriteInheritance").isPresent) return
+        if (!currentCls.getAnnotationByName("OverwriteTypeDeclaration").isPresent) return
 
         if (currentCls is ClassOrInterfaceDeclaration && baseCls is ClassOrInterfaceDeclaration) {
             baseCls.extendedTypes.clear()
@@ -535,9 +582,11 @@ internal object True2PatchMergeEngine {
         baseCls: TypeDeclaration<*>,
         rel: String,
     ): ModifiedSignatureOrigins {
-        val methodOrigins = mutableMapOf<String, String>()
-        val fieldOrigins = mutableMapOf<String, String>()
-        val constructorOrigins = mutableMapOf<String, String>()
+        val methodOrigins = mutableMapOf<String, OriginSource>()
+        val fieldOrigins = mutableMapOf<String, OriginSource>()
+        val constructorOrigins = mutableMapOf<String, OriginSource>()
+        val renames = mutableMapOf<String, String>() // new descriptor -> old descriptor
+        val memberFlags = mutableMapOf<String, Set<OriginFlag>>()
 
         // Methods with @ModifySignature
         currentCls.methods.filter { it.getAnnotationByName("ModifySignature").isPresent }.forEach { method ->
@@ -564,7 +613,15 @@ internal object True2PatchMergeEngine {
                 baseTarget.remove()
                 baseCls.addMember(clone)
             }
-            methodOrigins[descriptor(clone)] = posStr(method)
+            val newDesc = descriptor(clone)
+            val oldDesc = when (baseTarget) {
+                is MethodDeclaration -> descriptor(baseTarget)
+                is ConstructorDeclaration -> constructorDescriptor(baseTarget)
+                else -> targetDesc // field fallback
+            }
+            methodOrigins[newDesc] = OriginSource(posStr(method), hasOverwrite)
+            renames[newDesc] = oldDesc
+            memberFlags[newDesc] = computeModifySignatureFlags(method, hasOverwrite)
         }
 
         // Fields with @ModifySignature
@@ -592,7 +649,10 @@ internal object True2PatchMergeEngine {
                 baseTarget.remove()
                 baseCls.addMember(clone)
             }
-            fieldOrigins[clone.variables[0].nameAsString] = posStr(field)
+            val newName = clone.variables[0].nameAsString
+            fieldOrigins[newName] = OriginSource(posStr(field), hasOverwrite)
+            renames[newName] = targetDesc
+            memberFlags[newName] = computeModifySignatureFlags(field, hasOverwrite)
         }
 
         // Constructors with @ModifySignature
@@ -624,17 +684,45 @@ internal object True2PatchMergeEngine {
                 baseTarget.remove()
                 baseCls.addMember(clone)
             }
-            constructorOrigins[constructorDescriptor(clone)] = posStr(ctor)
+            val newDesc = constructorDescriptor(clone)
+            constructorOrigins[newDesc] = OriginSource(posStr(ctor), hasOverwrite)
+            renames[newDesc] = constructorDescriptor(baseTarget)
+            memberFlags[newDesc] = computeModifySignatureFlags(ctor, hasOverwrite)
         }
 
-        return ModifiedSignatureOrigins(methodOrigins, fieldOrigins, constructorOrigins)
+        return ModifiedSignatureOrigins(methodOrigins, fieldOrigins, constructorOrigins, renames, memberFlags)
     }
 
+    /**
+     * Per-member origin record for @ModifySignature processing.
+     *
+     * @property pos Line:col position string within the source file.
+     * @property bodyFromCurrent True if the member body lives in the current version
+     *   (accompanying @OverwriteVersion). False if only the signature changed and the
+     *   body was inherited from the base version; in that case the emitted origin must
+     *   point to the base file's body, not the current file.
+     */
+    private data class OriginSource(val pos: String, val bodyFromCurrent: Boolean)
+
     private data class ModifiedSignatureOrigins(
-        val methods: Map<String, String>,
-        val fields: Map<String, String>,
-        val constructors: Map<String, String>,
+        val methods: Map<String, OriginSource>,
+        val fields: Map<String, OriginSource>,
+        val constructors: Map<String, OriginSource>,
+        /** Maps new member descriptor to old member descriptor for @ModifySignature renames. */
+        val renames: Map<String, String> = emptyMap(),
+        /** Flag set for each trueSrc member descriptor (new name after rename). */
+        val memberFlags: Map<String, Set<OriginFlag>> = emptyMap(),
     )
+
+    private fun computeModifySignatureFlags(
+        member: com.github.javaparser.ast.body.BodyDeclaration<*>,
+        hasOverwrite: Boolean,
+    ): Set<OriginFlag> {
+        val flags = java.util.EnumSet.of(OriginFlag.TRUESRC, OriginFlag.MODSIG)
+        if (hasOverwrite) flags.add(OriginFlag.OVERWRITE)
+        if (member.getAnnotationByName("ShadowVersion").isPresent) flags.add(OriginFlag.SHADOW)
+        return flags
+    }
 
     private fun resolveMethodOrField(
         baseCls: TypeDeclaration<*>,
@@ -687,7 +775,7 @@ internal object True2PatchMergeEngine {
 
     // ---- Trigger detection ----
 
-    private val PROCESSING_ANNOTATIONS = setOf("DeleteMethodsAndFields", "DeleteClass", "OverwriteInheritance")
+    private val PROCESSING_ANNOTATIONS = setOf("DeleteMethodsAndFields", "DeleteClass", "OverwriteTypeDeclaration")
 
     private fun hasMemberTrigger(m: com.github.javaparser.ast.body.BodyDeclaration<*>): Boolean =
         m.getAnnotationByName("OverwriteVersion").isPresent ||
@@ -701,7 +789,7 @@ internal object True2PatchMergeEngine {
         getEnumEntries(cls).any   { hasMemberTrigger(it) } ||
         getAnnotationMembers(cls).any { hasMemberTrigger(it) } ||
         cls.getAnnotationByName("DeleteMethodsAndFields").isPresent ||
-        cls.getAnnotationByName("OverwriteInheritance").isPresent ||
+        cls.getAnnotationByName("OverwriteTypeDeclaration").isPresent ||
         cls.annotations.any { it.nameAsString !in PROCESSING_ANNOTATIONS }
 
     // ---- Non-annotated origin collection ----
@@ -712,51 +800,37 @@ internal object True2PatchMergeEngine {
         srcRelRoot: String,
         originEntries: MutableList<String>,
         baseOriginMap: OriginMap? = null,
+        memberFlags: Set<OriginFlag> = emptySet(),
     ) {
+        val flagStr = if (memberFlags.isEmpty()) "" else OriginFlag.formatFlags(memberFlags)
+        fun add(key: String, value: String) {
+            val line = if (flagStr.isEmpty()) "$key\t$value" else "$key\t$value\t$flagStr"
+            originEntries.add(line)
+        }
         cls.methods.forEach { m ->
             val desc = descriptor(m)
-            val inherited = baseOriginMap?.getMember(rel, desc)
-            if (inherited != null) {
-                originEntries.add("$rel#$desc\t$inherited")
-            } else {
-                originEntries.add("$rel#$desc\t$srcRelRoot/$rel:${posStr(m)}")
-            }
+            val value = baseOriginMap?.getMember(rel, desc) ?: "$srcRelRoot/$rel:${posStr(m)}"
+            add("$rel#$desc", value)
         }
         getTypeConstructors(cls).forEach { c ->
             val desc = constructorDescriptor(c)
-            val inherited = baseOriginMap?.getMember(rel, desc)
-            if (inherited != null) {
-                originEntries.add("$rel#$desc\t$inherited")
-            } else {
-                originEntries.add("$rel#$desc\t$srcRelRoot/$rel:${posStr(c)}")
-            }
+            val value = baseOriginMap?.getMember(rel, desc) ?: "$srcRelRoot/$rel:${posStr(c)}"
+            add("$rel#$desc", value)
         }
         cls.fields.forEach { f ->
             val fName = f.variables[0].nameAsString
-            val inherited = baseOriginMap?.getMember(rel, fName)
-            if (inherited != null) {
-                originEntries.add("$rel#$fName\t$inherited")
-            } else {
-                originEntries.add("$rel#$fName\t$srcRelRoot/$rel:${posStr(f)}")
-            }
+            val value = baseOriginMap?.getMember(rel, fName) ?: "$srcRelRoot/$rel:${posStr(f)}"
+            add("$rel#$fName", value)
         }
         getEnumEntries(cls).forEach { e ->
             val cName = e.nameAsString
-            val inherited = baseOriginMap?.getMember(rel, cName)
-            if (inherited != null) {
-                originEntries.add("$rel#$cName\t$inherited")
-            } else {
-                originEntries.add("$rel#$cName\t$srcRelRoot/$rel:${posStr(e)}")
-            }
+            val value = baseOriginMap?.getMember(rel, cName) ?: "$srcRelRoot/$rel:${posStr(e)}"
+            add("$rel#$cName", value)
         }
         getAnnotationMembers(cls).forEach { m ->
             val key = "${m.nameAsString}()"
-            val inherited = baseOriginMap?.getMember(rel, key)
-            if (inherited != null) {
-                originEntries.add("$rel#$key\t$inherited")
-            } else {
-                originEntries.add("$rel#$key\t$srcRelRoot/$rel:${posStr(m)}")
-            }
+            val value = baseOriginMap?.getMember(rel, key) ?: "$srcRelRoot/$rel:${posStr(m)}"
+            add("$rel#$key", value)
         }
     }
 

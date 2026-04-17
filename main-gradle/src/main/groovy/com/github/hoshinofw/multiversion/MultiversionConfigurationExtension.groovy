@@ -23,4 +23,20 @@ class MultiversionConfigurationExtension {
      * Add the Architectury API dependency manually if needed.
      */
     boolean automaticArchApi = false
+
+    /**
+     * Filename of the resource patch configuration file inside each version module's
+     * {@code src/main/resources} directory.
+     *
+     * <p>Defaults to {@code "multiversion-resources.json"}.
+     */
+    String resourcesConfigPath = "multiversion-resources.json"
+
+    /**
+     * Path to the changelog file used for Modrinth/CurseForge publishing, relative to the
+     * project root.
+     *
+     * <p>Defaults to {@code "changelog.md"}.
+     */
+    String changelogPath = "changelog.md"
 }

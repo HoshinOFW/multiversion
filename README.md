@@ -30,21 +30,30 @@ pluginManagement {
 }
 
 plugins {
-    id "com.github.hoshinofw.multiversion.multiversion-settings" version "0.5.0"
+    id "com.github.hoshinofw.multiversion.multiversion-settings" version "0.6.0"
+}
+
+multiversionModules {
+    architecturyCommon   = ['common']
+    architecturyFabric   = ['fabric']
+    architecturyNeoforge = ['neoforge']
+    patchModules = ['common', 'fabric', 'neoforge']
 }
 ```
 
-Then apply the main plugin in the root `build.gradle`. The annotations `compileOnly` dependency is injected automatically into every subproject. No additional setup is needed.
+Then apply the main plugin in the root `build.gradle`. The annotations `compileOnly` dependency is injected automatically into every subproject. No additional setup is needed. Task wiring is also declared here.
 
 ```groovy
 plugins {
-    id "com.github.hoshinofw.multiversion.multiversion" version "0.5.4"
+    id "com.github.hoshinofw.multiversion.multiversion" version "0.6.0"
 }
 
 repositories {
     mavenCentral()
     // any additional repositories your mod needs
 }
+
+multiversion.wireTask 'runClient'
 ```
 
 If your resource files contain property placeholders (e.g. `${mod_license}` in `fabric.mod.json`), declare them via `multiversionResources` so they get substituted at build time:
@@ -125,6 +134,8 @@ subprojects {
 
 The `multiversionModules` closure declares which module names exist in the project, what loader type each belongs to, which should receive Architectury/Loom auto-configuration, and which should have patchedSrc generation applied across versions.
 
+`multiversionModules` is configured in **`settings.gradle`** (not `build.gradle`), because the settings plugin uses it to decide which subprojects to include. The main build plugin then reads the same extension automatically.
+
 `multiversionModules` is **required** — without it the plugin does not configure any subprojects.
 
 #### Plain loader-type lists
@@ -132,6 +143,7 @@ The `multiversionModules` closure declares which module names exist in the proje
 `common`, `fabric`, `forge`, and `neoforge` declare module names for routing purposes only. They determine what `isFabric()`, `moduleType()`, etc. return, and which modules receive `multiversionResources` processing and patchedSrc generation. No Loom or Architectury configuration is applied to these modules — dependency and build setup is left entirely to you.
 
 ```groovy
+// settings.gradle
 multiversionModules {
     common   = ['common', 'api']  // 'api' is plain: no Loom, you manage its build
     fabric   = ['fabric']
@@ -154,8 +166,9 @@ multiversionModules {
 Listing a module in an `architectury*` list **implicitly declares it in the matching plain list** as well. There is no need to list it twice.
 
 ```groovy
+// settings.gradle
 multiversionModules {
-    // All three modules use Loom — plain lists are implied:
+    // All three modules use Loom -- plain lists are implied:
     architecturyCommon   = ['common']
     architecturyFabric   = ['fabric']
     architecturyNeoforge = ['neoforge']
@@ -164,6 +177,26 @@ multiversionModules {
 ```
 
 Only `architecturyCommon` modules are shadow-bundled into platform modules. A plain `common` module is treated as an external dependency.
+
+#### Version discovery configuration
+
+By default the settings plugin scans the project root for directories matching `^\d+(\.\d+){1,3}$` (e.g. `1.20.1/`, `1.21.1/`). Two optional fields let you customize this:
+
+```groovy
+// settings.gradle
+multiversionModules {
+    // Use a custom regex for version directory names
+    versionPattern = '^\\d+\\.\\d+\\.\\d+$'
+
+    // Or provide an explicit ordered version list (skips filesystem scanning)
+    versions = ['1.20.1', '1.21.1']
+
+    architecturyFabric = ['fabric']
+    patchModules = ['fabric']
+}
+```
+
+When `versions` is set, only those directories are used (in the given order). When module lists are populated, the settings plugin only includes subdirectories whose names match a declared module, instead of including every directory that contains source code.
 
 #### `patchModules`
 
@@ -175,19 +208,12 @@ If a module is declared in `patchModules` but is missing from a particular versi
 
 Wires all `:mc_version:module:taskName` into a single root-level `:taskName`. Subprojects that do not have the task are silently skipped. An optional filter closure restricts which subprojects are wired.
 
+`wireTask` is called on the `multiversion` extension in `build.gradle` (not `settings.gradle`), since it depends on build-phase project references.
+
 ```groovy
-multiversionModules {
-    architecturyCommon   = ['common']
-    architecturyFabric   = ['fabric']
-    architecturyNeoforge = ['neoforge']
-    patchModules = ['common', 'fabric', 'neoforge']
-
-    // Wire all :mc_version:module:build into root :build
-    wireTask 'runClient'
-
-    // Wire only fabric subprojects
-    wireTask 'remapJar', { p -> p.name == 'fabric' }
-}
+// build.gradle
+multiversion.wireTask 'runClient'
+multiversion.wireTask 'remapJar', { p -> p.name == 'fabric' }
 ```
 
 Running `./gradlew runClient` will execute `:1.20.1:fabric:runClient`, `:1.21.1:fabric:runClient`, etc. (whichever versioned subprojects have a `runClient` task).
@@ -198,13 +224,17 @@ A separate root-level closure for project-wide plugin behaviour settings.
 
 ```groovy
 multiversionConfiguration {
-    automaticArchApi = false  // default
+    automaticArchApi = false                              // default
+    resourcesConfigPath = "multiversion-resources.json"   // default
+    changelogPath = "changelog.md"                        // default
 }
 ```
 
 | Property | Default | Description |
 |---|---|---|
 | `automaticArchApi` | `false` | When `true`, the plugin reads `architectury_api_version` from `gradle.properties` and adds the Architectury API dependency automatically to every module enrolled in an `architectury*` list. When `false`, the property is ignored and the dependency is your responsibility. |
+| `resourcesConfigPath` | `"multiversion-resources.json"` | Filename of the resource patch configuration file inside each version module's `src/main/resources` directory. |
+| `changelogPath` | `"changelog.md"` | Path to the changelog file (relative to project root) used for Modrinth/CurseForge publishing. |
 
 #### Root-level shared source
 
@@ -244,26 +274,19 @@ public MyClass(String name) {
 #### `@ShadowVersion`
 Declares a reference to a method, field, or constructor that exists in the previous version, without replacing it. Equivalent to `@Shadow` in Mixin. Useful when a new method needs to call something from the base version.
 
-Since shadow declarations are stubs, version classes can be marked `abstract` to avoid writing placeholder bodies. The merged output in patchedSrc keeps the original class modifier from the base version, so declaring your version class as `abstract` does not make the compiled class abstract.
+Shadow declarations are stubs: the merge engine ignores any body or initializer you write on them. Methods can be declared bodyless, and fields without initializers are fine. The IDE plugin suppresses the usual "missing method body" and "not initialized" errors so trueSrc stays clean.
 
-`native` is also usable as a way to bypass `abstract` being incompatible with `static`.
-
-`abstract` classes have another issue: `new MyClass()` might throw an error when called in the same version. If your code needs to call the constructor in the newer version, you have two options: Wrap the constructor in a static builder method in the base version, or stick purely to `native`.
-
-Therefore, both are usable, and it is strictly up to developer preference to choose pattern one over the other.
+Constructors are the one exception: Java's grammar requires a constructor body, so write `{}`.
 ```java
-public abstract class MyClass {
-    //All of these are valid
+public class MyClass {
     @ShadowVersion public Logger LOGGER;
     @ShadowVersion public static Logger LOGGER;
     @ShadowVersion public static final Logger LOGGER2;
-    
-    @ShadowVersion public static void existingMethod() {}
-    @ShadowVersion public static native void otherMethod();
-    @ShadowVersion public abstract otherOtherMethod();
-    
-    //Native or abstract constructors are illegal... 
-    //So in this case you're forced to write an empty constructor.
+
+    @ShadowVersion public static void existingMethod();
+    @ShadowVersion public void otherMethod();
+
+    // Constructors need an empty body.
     @ShadowVersion public MyClass(String name) {}
 
     // New method that calls into the base version
@@ -285,15 +308,15 @@ public class MyClass { ... }
 
 `init` alone (without parentheses) is also accepted when there is only one constructor to avoid ambiguity.
 
-#### `@OverwriteInheritance`
-Replaces the base version's `extends` and `implements` clauses with this version's declarations. Use when a class changes its parent or the set of interfaces it implements between versions. The entire inheritance declaration is replaced — to remove an interface, simply omit it.
+#### `@OverwriteTypeDeclaration`
+Replaces the base version's type declaration (including `extends` and `implements` clauses) with this version's declarations. Use when a class changes its parent, the interfaces it implements, or its record components between versions. The entire type declaration is replaced -- to remove an interface, simply omit it.
 
 ```java
 // 1.20.1/common — base version
 public class MyRenderer extends OldRenderer implements OldInterface { ... }
 
 // 1.21.1/common — changes parent and drops OldInterface
-@OverwriteInheritance
+@OverwriteTypeDeclaration
 public class MyRenderer extends NewRenderer implements NewInterface { ... }
 ```
 
@@ -448,9 +471,9 @@ At least one of `curseforge_id` or `modrinth_id` must be set for publishing to b
 
 These are read at publish time. They are never required for building.
 
-#### `changelog.md`
+#### Changelog file
 
-Place a `changelog.md` file at the root of the project. Its contents are sent as the release description to both CurseForge and Modrinth. If the file is absent, the upload proceeds with a placeholder message.
+Place a `changelog.md` file at the root of the project (or the path configured via `multiversionConfiguration { changelogPath = "..." }`). Its contents are sent as the release description to both CurseForge and Modrinth. If the file is absent, the upload proceeds with a placeholder message.
 
 #### Running a publish
 
@@ -498,17 +521,17 @@ This task also runs automatically on build, so compilation always uses the lates
 
 ### IDE plugin
 
-An IntelliJ IDEA plugin is available on the JetBrains Marketplace, simply called Minecraft Multiversion Modding. It is strongly recommended. Without it you will run into false navigation and duplicate class errors caused by the multiple source sets.
+An IntelliJ IDEA plugin is available on the JetBrains Marketplace, simply called Minecraft Multiversion Modding. It is strongly recommended. Without it you will run into false duplicate class errors and broken navigation caused by the multiple source sets.
 
-- Remove false IDE errors.
-- Navigation support between versions
-- Method/field descriptor validation
-- Annotation validation
-- Support for refactoring classes, fields, and methods across versions.
-- Correct Find Usages search across versions via patchedSrc. Note: the inline "n usages" code lens may show an incorrect count due to IntelliJ limitations, but clicking it runs the real search and returns the correct results.
-- Probably other things too, I don't update this list.
+- **Error suppression**: Hides false duplicate class errors, uninitialized field warnings on `@ShadowVersion` members, and other false positives caused by the version layering system.
+- **Version navigation**: `Alt+W` / `Alt+S` to jump upstream/downstream. Context-sensitive: navigates the member at cursor, or the class if not on a member. Replaces the current tab in-place.
+- **All-versions popup**: `Alt+Shift+V` shows every version of the current member or class with status labels. Click to navigate.
+- **Gutter icons**: Up/down arrows next to annotated members and members overridden downstream. Click to navigate.
+- **Annotation validation**: Validates `@DeleteMethodsAndFields`, `@ModifySignature`, and other descriptor strings against the actual members in the previous version. Flags missing `@OverwriteVersion`/`@ShadowVersion` on members that exist in the base.
+- **Refactoring**: Renames propagate across all versions and patchedSrc, including descriptor strings in annotations.
+- **Find Usages**: Searches across patchedSrc and remaps results back to trueSrc. The inline "n usages" code lens may show an incorrect count due to an IntelliJ limitation, but clicking it runs the correct search.
 
-It is strongly recommended you also use the Minecraft Development plugin, as it will provide support for actual mod dev. The Architectury plugin can also be quite useful.
+It is also recommended to use the Minecraft Development plugin for general mod development support. The Architectury plugin can also be useful.
 
 ---
 

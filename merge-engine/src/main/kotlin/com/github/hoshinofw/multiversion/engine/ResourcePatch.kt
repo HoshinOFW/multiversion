@@ -16,13 +16,16 @@ data class ResourcePatchConfig(
         @JvmStatic
         fun empty(): ResourcePatchConfig = ResourcePatchConfig(emptyList(), emptyList())
 
+        const val DEFAULT_FILENAME = "multiversion-resources.json"
+
         /**
-         * Loads `multiversion-resources.json` from [resourcesDir].
+         * Loads the resource patch config from [resourcesDir] using the given [filename].
          * Returns [empty] if the file is absent or malformed.
          */
         @JvmStatic
-        fun fromDirectory(resourcesDir: File): ResourcePatchConfig {
-            val f = File(resourcesDir, "multiversion-resources.json")
+        @JvmOverloads
+        fun fromDirectory(resourcesDir: File, filename: String = DEFAULT_FILENAME): ResourcePatchConfig {
+            val f = File(resourcesDir, filename)
             if (!f.exists()) return empty()
             return fromJson(f.readText())
         }

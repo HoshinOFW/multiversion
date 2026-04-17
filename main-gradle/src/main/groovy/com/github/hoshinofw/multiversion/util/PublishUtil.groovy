@@ -14,8 +14,9 @@ class PublishUtil {
 
     static String readChangelog(Project root) {
         GeneralUtil.ensureNotNull(root, "ReadChangelog")
-        def f = root.file("changelog.md")
-        return f.exists() ? f.getText("UTF-8") : "No changelog.md found."
+        String path = GeneralUtil.configExt(root)?.changelogPath ?: "changelog.md"
+        def f = root.file(path)
+        return f.exists() ? f.getText("UTF-8") : "No ${path} found."
     }
 
     static def singleJarFromDir(Project root, String dirPath) {

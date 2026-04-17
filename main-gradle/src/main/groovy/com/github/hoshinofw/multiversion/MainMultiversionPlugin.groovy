@@ -21,7 +21,12 @@ class MainMultiversionPlugin implements Plugin<Project> {
         GeneralUtil.ensureNotNull(target, "Main")
 
         MultiversionResourcesExtension multiversionResourcesExtension = target.extensions.create("multiversionResources", MultiversionResourcesExtension)
-        MultiversionModulesExtension multiversionModulesExtension = target.extensions.create("multiversionModules", MultiversionModulesExtension)
+        // Read the modules extension from the settings plugin (registered on gradle.ext).
+        // Falls back to creating a local one for projects that haven't migrated to settings.gradle yet.
+        MultiversionModulesExtension multiversionModulesExtension =
+                target.gradle.ext.has("multiversionModules")
+                        ? target.gradle.ext.get("multiversionModules") as MultiversionModulesExtension
+                        : target.extensions.create("multiversionModules", MultiversionModulesExtension)
         target.extensions.create("multiversionConfiguration", MultiversionConfigurationExtension)
 
         // Register on every project so multiversion.isFabric() etc. resolve correctly

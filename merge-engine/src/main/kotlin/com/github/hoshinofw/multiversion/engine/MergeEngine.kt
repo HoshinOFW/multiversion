@@ -105,6 +105,43 @@ object MergeEngine {
         currentSrcDir, baseDir, patchedOutDir, currentSrcRelRoot, baseRelRoot, originMap, baseOriginMap
     )
 
+    // ---- Origin map synthesis ----
+
+    /**
+     * Builds an in-memory [OriginMap] by walking a trueSrc directory and running the
+     * single-file merge with no base, so every member is recorded as a brand-new
+     * trueSrc declaration. This is the fallback origin map for versions that have a
+     * trueSrc directory but no generated `_originMap.tsv` (typically the project's
+     * base version, which is not processed by `generatePatchedJava`).
+     *
+     * The resulting map is semantically equivalent to what the engine would emit if
+     * that version were run through `processVersion` with an empty base.
+     *
+     * @param trueSrcDir the `<version>/<module>/src/main/java` directory.
+     * @param versionRelRoot the relative-root label to write into origin values
+     *   (e.g. `"1.20.1/common/src/main/java"`).
+     */
+    fun synthesizeFromTrueSrc(trueSrcDir: File, versionRelRoot: String): OriginMap {
+        val map = OriginMap()
+        if (!trueSrcDir.exists()) return map
+        trueSrcDir.walkTopDown().filter { it.isFile && it.name.endsWith(".java") }.forEach { file ->
+            val rel = PathUtil.relativize(trueSrcDir, file)
+            try {
+                val content = file.readText(Charsets.UTF_8)
+                val result = True2PatchMergeEngine.mergeContent(
+                    currentContent = content,
+                    baseContent = null,
+                    rel = rel,
+                    currentSrcRelRoot = versionRelRoot,
+                    baseRelRoot = "",
+                    baseOriginMap = null,
+                )
+                map.addEntries(result.originEntries)
+            } catch (_: Exception) { /* skip unparseable files */ }
+        }
+        return map
+    }
+
     // ---- Result writing ----
 
     /**

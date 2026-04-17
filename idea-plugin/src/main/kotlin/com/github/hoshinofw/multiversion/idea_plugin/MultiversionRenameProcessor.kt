@@ -78,21 +78,12 @@ class MultiversionRenameProcessor : RenamePsiElementProcessor() {
         elementClass: PsiClass,
         allRenames: MutableMap<PsiElement, String>
     ) {
-        when (element) {
-            is PsiClass  -> psiFile.classes
-                .filter { it.name == element.name }
-                .forEach { if (it !== element) allRenames[it] = newName }
-
-            is PsiMethod -> psiFile.classes
-                .filter { it.name == elementClass.name }
-                .flatMap { it.findMethodsByName(element.name, false).toList() }
-                .forEach { if (it !== element) allRenames[it] = newName }
-
-            is PsiField  -> psiFile.classes
-                .filter { it.name == elementClass.name }
-                .mapNotNull { it.findFieldByName(element.name, false) }
-                .forEach { if (it !== element) allRenames[it] = newName }
-        }
+        psiFile.classes
+            .filter { it.name == elementClass.name }
+            .forEach { targetClass ->
+                val matched = findMatchingElement(element, targetClass)
+                if (matched != null && matched !== element) allRenames[matched] = newName
+            }
     }
 
     /**
@@ -182,7 +173,7 @@ class MultiversionRenameProcessor : RenamePsiElementProcessor() {
 // ── VirtualFile helper ────────────────────────────────────────────────────────
 
 internal fun com.intellij.openapi.vfs.VirtualFile.inPatchedSrc(): Boolean =
-    path.contains("/${PathUtil.PATCHED_SRC_DIR}/")
+    isInPatchedSrc(path.replace('\\', '/'))
 
 // ── Custom rename dialog (adds the "Propagate to other versions" checkbox) ───
 

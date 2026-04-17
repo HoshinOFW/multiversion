@@ -1,5 +1,6 @@
 package com.github.hoshinofw.multiversionSettings
 
+import com.github.hoshinofw.multiversion.MultiversionModulesExtension
 import org.gradle.api.Plugin
 import org.gradle.api.initialization.Settings
 import org.gradle.api.logging.Logger
@@ -9,7 +10,7 @@ import java.util.regex.Pattern
 
 class MainMultiversionSettingsPlugin implements Plugin<Settings> {
 
-    static final Pattern versionDirRegex = ~/^\d+(\.\d+){1,3}$/
+    static final Pattern DEFAULT_VERSION_DIR_REGEX = ~/^\d+(\.\d+){1,3}$/
     private static final Logger log = Logging.getLogger(MainMultiversionSettingsPlugin)
 
     @Override
@@ -25,22 +26,31 @@ class MainMultiversionSettingsPlugin implements Plugin<Settings> {
             }
         }
 
+        // Register the extension so users can configure it in settings.gradle
+        MultiversionModulesExtension mme = target.extensions.create("multiversionModules", MultiversionModulesExtension)
+
+        // Defer project inclusion until after settings.gradle finishes evaluating,
+        // so the user's multiversionModules { } block has already populated the extension.
+        target.gradle.settingsEvaluated {
+            mme.validate()
+            discoverAndIncludeProjects(target, mme)
+            // Store on gradle.ext so the main build plugin can retrieve it
+            target.gradle.ext.set("multiversionModules", mme)
+        }
+    }
+
+    private static void discoverAndIncludeProjects(Settings target, MultiversionModulesExtension mme) {
         File root = target.settingsDir
 
-        List<File> versionDirs = root.listFiles()
-                ?.findAll { it.isDirectory() && (it.name ==~ versionDirRegex) }
-                ?.sort { a, b -> a.name <=> b.name } ?: []
+        List<File> versionDirs = resolveVersionDirs(root, mme)
 
         if (versionDirs.isEmpty()) {
             log.lifecycle("[multiversion] No version directories found (expected e.g. 1.20.1/, 1.21.1/).")
             return
         }
 
-        // The settings phase runs before build.gradle is evaluated, so multiversionModules {}
-        // is not yet available here. Module discovery is filesystem-based: any subdirectory
-        // of a version folder that contains a src/ tree or a build file is included.
-        // The main plugin's isNotBaseVersionModule guard then limits configuration to only
-        // the modules declared in multiversionModules {}.
+        Set<String> declaredModules = mme.allModules() as Set
+
         versionDirs.each { File verDir ->
             String ver = verDir.name
 
@@ -48,12 +58,36 @@ class MainMultiversionSettingsPlugin implements Plugin<Settings> {
                     ?.findAll { it.isDirectory() && isModuleDir(it) }
                     ?.sort { it.name } ?: []
 
+            // If modules are declared in the extension, only include those.
+            // Otherwise include all discovered module directories (backwards-compatible).
+            if (!declaredModules.isEmpty()) {
+                moduleDirs = moduleDirs.findAll { declaredModules.contains(it.name) }
+            }
+
             moduleDirs.each { File modDir ->
                 String path = ":${ver}:${modDir.name}"
                 target.include(path)
                 target.project(path).projectDir = modDir
             }
         }
+    }
+
+    private static List<File> resolveVersionDirs(File root, MultiversionModulesExtension mme) {
+        // If an explicit version list is provided, use it directly
+        if (mme.versions != null) {
+            return mme.versions
+                    .collect { new File(root, it) }
+                    .findAll { it.isDirectory() }
+        }
+
+        // Otherwise scan the filesystem with the configured (or default) pattern
+        Pattern regex = mme.versionPattern != null
+                ? Pattern.compile(mme.versionPattern)
+                : DEFAULT_VERSION_DIR_REGEX
+
+        return root.listFiles()
+                ?.findAll { it.isDirectory() && (it.name ==~ regex) }
+                ?.sort { a, b -> a.name <=> b.name } ?: []
     }
 
     private static boolean isModuleDir(File dir) {

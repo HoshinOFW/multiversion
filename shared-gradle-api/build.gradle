@@ -1,0 +1,46 @@
+plugins {
+    id "groovy"
+    id "maven-publish"
+}
+
+base {
+    group = "com.github.hoshinofw.multiversion"
+    archivesName = "multiversion-shared-gradle-api"
+    version = shared_gradle_api_version
+}
+
+java {
+    toolchain { languageVersion = JavaLanguageVersion.of(21) }
+    withSourcesJar()
+    withJavadocJar()
+}
+
+repositories {
+    mavenCentral()
+    gradlePluginPortal()
+}
+
+dependencies {
+    implementation gradleApi()
+    implementation localGroovy()
+}
+
+publishing {
+    publications {
+        maven(MavenPublication) {
+            groupId = "com.github.hoshinofw.multiversion"
+            artifactId = "multiversion-shared-gradle-api"
+            from components.java
+        }
+    }
+    repositories {
+        maven {
+            url = uri('https://maven.hoshinofw.net/releases')
+
+            credentials {
+                username = System.getenv('REPOSILITE_USERNAME') ?: ''
+                password = System.getenv('REPOSILITE_PASSWORD') ?: ''
+            }
+        }
+    }
+}

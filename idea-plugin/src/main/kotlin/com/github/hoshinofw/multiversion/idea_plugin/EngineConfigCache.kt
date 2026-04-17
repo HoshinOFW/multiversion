@@ -1,6 +1,11 @@
 package com.github.hoshinofw.multiversion.idea_plugin
 
+import com.github.hoshinofw.multiversion.engine.CachedOriginMap
 import com.github.hoshinofw.multiversion.engine.EngineConfig
+import com.github.hoshinofw.multiversion.engine.MergeEngine
+import com.github.hoshinofw.multiversion.engine.OriginMap
+import com.github.hoshinofw.multiversion.engine.PathUtil
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
@@ -19,8 +24,11 @@ import java.util.concurrent.ConcurrentHashMap
 object EngineConfigCache {
 
     private data class Entry(val config: EngineConfig, val lastModified: Long)
+    private data class SynthEntry(val map: OriginMap, val trueSrcDirStamp: Long)
 
     private val cache = ConcurrentHashMap<String, Entry>()
+    private val originMapCache = CachedOriginMap()
+    private val syntheticMapCache = ConcurrentHashMap<String, SynthEntry>()
 
     /**
      * Returns the [EngineConfig] for the versioned module that contains [file], or null if:
@@ -58,9 +66,62 @@ object EngineConfigCache {
         return config
     }
 
+    /**
+     * Returns the [OriginMap] for the given module root's patchedSrc, or null if
+     * no origin map file exists. Uses the engine's [CachedOriginMap] for
+     * file-modification-aware caching.
+     */
+    fun originMapForModuleRoot(moduleRoot: VirtualFile): OriginMap? {
+        val mapFile = File(moduleRoot.path, "${PathUtil.PATCHED_SRC_DIR}/${PathUtil.ORIGIN_MAP_FILENAME}")
+        return originMapCache.get(mapFile)
+    }
+
+    /**
+     * Synthesizes an [OriginMap] for a module whose trueSrc directory exists but whose
+     * patchedSrc origin map has not been generated. Used as a fallback for the base
+     * version (never patched) and for unbuilt versions.
+     *
+     * Cached per module root; invalidated when the trueSrc directory's `lastModified`
+     * changes. Returns null if the trueSrc directory does not exist.
+     */
+    private fun syntheticOriginMapForModuleRoot(vDir: File, moduleName: String): OriginMap? {
+        val trueSrcDir = File(vDir, "$moduleName/${PathUtil.TRUE_SRC_MARKER}")
+        if (!trueSrcDir.isDirectory) return null
+        val key = trueSrcDir.canonicalPath
+        val stamp = trueSrcDir.lastModified()
+        syntheticMapCache[key]?.let { if (it.trueSrcDirStamp == stamp) return it.map }
+
+        val versionRelRoot = "${vDir.name}/$moduleName/${PathUtil.TRUE_SRC_MARKER}"
+        val map = MergeEngine.synthesizeFromTrueSrc(trueSrcDir, versionRelRoot)
+        syntheticMapCache[key] = SynthEntry(map, stamp)
+        return map
+    }
+
+    /**
+     * Assembles the ordered list of origin maps for every version directory in [ctx].
+     * For each version: returns the generated `_originMap.tsv` when present; otherwise
+     * falls back to an in-memory synthesized map derived from that version's trueSrc.
+     * Returns null for a version only when neither a generated map nor a trueSrc
+     * directory exists.
+     *
+     * The returned list is aligned with [ctx.versionDirs]. The engine's walker
+     * (`OriginNavigation`) consumes it directly.
+     */
+    fun allOriginMapsFor(ctx: VersionContext, moduleName: String): List<OriginMap?> {
+        val lfs = LocalFileSystem.getInstance()
+        return ctx.versionDirs.map { vDir ->
+            val moduleRoot = lfs.findFileByIoFile(File(vDir, moduleName)) ?: return@map null
+            originMapForModuleRoot(moduleRoot) ?: syntheticOriginMapForModuleRoot(vDir, moduleName)
+        }
+    }
+
     /** Drops the cached entry for [moduleRoot] so the next read re-parses the file. */
     fun invalidate(moduleRoot: VirtualFile) {
         val configFile = File(moduleRoot.path, "build/multiversion-engine-config.json")
         cache.remove(configFile.canonicalPath)
+        val mapFile = File(moduleRoot.path, "${PathUtil.PATCHED_SRC_DIR}/${PathUtil.ORIGIN_MAP_FILENAME}")
+        originMapCache.invalidate(mapFile)
+        val trueSrcDir = File(moduleRoot.path, PathUtil.TRUE_SRC_MARKER)
+        syntheticMapCache.remove(trueSrcDir.canonicalPath)
     }
 }

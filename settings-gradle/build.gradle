@@ -6,21 +6,30 @@ plugins {
 
 base {
     group = "com.github.hoshinofw.multiversion"
-    version = "0.5.0"
+    version = settings_gradle_version
 }
 
 java {
     toolchain { languageVersion = JavaLanguageVersion.of(21) }
+    withSourcesJar()
+    withJavadocJar()
 }
 
 repositories {
     mavenCentral()
+    mavenLocal()
     gradlePluginPortal()
+    maven { url = "https://maven.hoshinofw.net/releases" }
 }
+
+def sharedApiProps = new Properties()
+sharedApiProps.load(file("../shared-gradle-api/gradle.properties").newInputStream())
+def sharedApiVersion = sharedApiProps['shared_gradle_api_version']
 
 dependencies {
     implementation gradleApi()
     implementation localGroovy()
+    implementation "com.github.hoshinofw.multiversion:multiversion-shared-gradle-api:${sharedApiVersion}"
 }
 
 publishing {

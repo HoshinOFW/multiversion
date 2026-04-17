@@ -89,7 +89,7 @@ class PatchedSrcGotoDeclarationHandler : GotoDeclarationHandler {
         return originPsiFile
     }
 
-    private fun VirtualFile.isInPatchedSrc() = path.replace('\\', '/').contains("/${PathUtil.PATCHED_SRC_DIR}/")
+    private fun VirtualFile.isInPatchedSrc() = isInPatchedSrc(path.replace('\\', '/'))
 }
 
 data class OriginEntry(val file: VirtualFile, val line: Int, val col: Int)
@@ -125,7 +125,7 @@ class OriginMapCache(private val project: Project) {
 
     private fun prepareContext(patchedFile: VirtualFile): ResolverContext? {
         val normPath = patchedFile.path.replace('\\', '/')
-        val patchedRoot = patchedRoot(normPath) ?: return null
+        val patchedRoot = patchedSrcRoot(normPath) ?: return null
         val rel = relInsidePatchedSrc(normPath, patchedRoot) ?: return null
         val relKey = rel.removePrefix("${PathUtil.JAVA_SRC_SUBDIR}/")
                         .removePrefix("${PathUtil.RESOURCES_SRC_SUBDIR}/")
@@ -133,7 +133,7 @@ class OriginMapCache(private val project: Project) {
         val mappingFile = File("$patchedRoot/${PathUtil.ORIGIN_MAP_FILENAME}")
         val map = mapCache.get(mappingFile) ?: return null
 
-        val moduleRootPath = patchedRoot.substringBeforeLast("/${PathUtil.PATCHED_SRC_DIR}")
+        val moduleRootPath = moduleRootFromPatchedSrc(patchedRoot)
         val moduleRootVf = LocalFileSystem.getInstance().findFileByPath(moduleRootPath)
         val config = moduleRootVf?.let { EngineConfigCache.forModuleRoot(it) }
 
@@ -145,7 +145,7 @@ class OriginMapCache(private val project: Project) {
         val lfs = LocalFileSystem.getInstance()
         if (File(originRel).isAbsolute) return lfs.findFileByIoFile(File(originRel))
 
-        val moduleRootPath = patchedRoot.substringBeforeLast("/${PathUtil.PATCHED_SRC_DIR}")
+        val moduleRootPath = moduleRootFromPatchedSrc(patchedRoot)
         val moduleRoot = File(moduleRootPath)
         val versionDir = moduleRoot.parentFile
         val multiVersionRoot = versionDir?.parentFile
@@ -160,17 +160,5 @@ class OriginMapCache(private val project: Project) {
             lfs.findFileByIoFile(f)?.let { return it }
         }
         return null
-    }
-
-    private fun patchedRoot(path: String): String? {
-        val marker = "/${PathUtil.PATCHED_SRC_DIR}/"
-        val idx = path.indexOf(marker)
-        if (idx < 0) return null
-        return path.substring(0, idx) + "/${PathUtil.PATCHED_SRC_DIR}"
-    }
-
-    private fun relInsidePatchedSrc(path: String, patchedRoot: String): String? {
-        val prefix = patchedRoot.trimEnd('/') + "/"
-        return if (path.startsWith(prefix)) path.removePrefix(prefix) else null
     }
 }

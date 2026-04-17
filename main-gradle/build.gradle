@@ -1,12 +1,12 @@
 plugins {
     id "groovy"
     id "groovy-gradle-plugin"
-    id "com.gradle.plugin-publish" version "1.3.1"
+    id "com.gradle.plugin-publish" version "$gradle_plugin_publish_version"
 }
 
 base {
     group = "com.github.hoshinofw.multiversion"
-    version = "0.5.5"
+    version = main_gradle_version
 }
 
 def engineProps = new Properties()
@@ -14,8 +14,12 @@ engineProps.load(file("../merge-engine/gradle.properties").newInputStream())
 def annotationsProps = new Properties()
 annotationsProps.load(file("../annotations/gradle.properties").newInputStream())
 
+def sharedApiProps = new Properties()
+sharedApiProps.load(file("../shared-gradle-api/gradle.properties").newInputStream())
+
 def annotationsVersion  = annotationsProps['annotations_package_version']
 def mergeEngineVersion  = engineProps['merge_engine_version']
+def sharedApiVersion    = sharedApiProps['shared_gradle_api_version']
 
 def generatedConstantsDir = layout.buildDirectory.dir("generated/sources/plugin-constants/groovy/main")
 
@@ -46,16 +50,17 @@ dependencies {
     implementation gradleApi()
     implementation localGroovy()
 
-    implementation "net.fabricmc.unpick:unpick:3.0.0-beta.9"
-    implementation "net.fabricmc.unpick:unpick-format-utils:3.0.0-beta.9"
+    implementation "net.fabricmc.unpick:unpick:${unpick_version}"
+    implementation "net.fabricmc.unpick:unpick-format-utils:${unpick_version}"
 
-    implementation "dev.architectury.loom:dev.architectury.loom.gradle.plugin:1.11-SNAPSHOT"
-    implementation "architectury-plugin:architectury-plugin.gradle.plugin:3.4-SNAPSHOT"
-    implementation "com.gradleup.shadow:com.gradleup.shadow.gradle.plugin:8.3.6"
-    implementation "org.jetbrains.gradle.plugin.idea-ext:org.jetbrains.gradle.plugin.idea-ext.gradle.plugin:1.3"
-    implementation "me.modmuss50.mod-publish-plugin:me.modmuss50.mod-publish-plugin.gradle.plugin:1.1.0"
+    implementation "dev.architectury.loom:dev.architectury.loom.gradle.plugin:${architectury_loom_version}"
+    implementation "architectury-plugin:architectury-plugin.gradle.plugin:${architectury_plugin_version}"
+    implementation "com.gradleup.shadow:com.gradleup.shadow.gradle.plugin:${shadow_version}"
+    implementation "org.jetbrains.gradle.plugin.idea-ext:org.jetbrains.gradle.plugin.idea-ext.gradle.plugin:${idea_ext_version}"
+    implementation "me.modmuss50.mod-publish-plugin:me.modmuss50.mod-publish-plugin.gradle.plugin:${mod_publish_plugin_version}"
 
     implementation "com.github.hoshinofw.multiversion:multiversion-merge-engine:${mergeEngineVersion}"
+    implementation "com.github.hoshinofw.multiversion:multiversion-shared-gradle-api:${sharedApiVersion}"
 }
 
 gradlePlugin {

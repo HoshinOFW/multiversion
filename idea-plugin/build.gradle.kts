@@ -15,7 +15,7 @@ idea {
 }
 
 group = "com.github.hoshinofw.multiversion"
-version = "0.5.6"
+version = property("idea_plugin_version") as String
 
 repositories {
     mavenCentral()

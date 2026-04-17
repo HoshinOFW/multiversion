@@ -88,3 +88,66 @@ fun findCorrespondingFile(originFile: VirtualFile, originSrcRoot: VirtualFile, t
         targetModuleRoot.findFileByRelativePath("${PathUtil.TRUE_SRC_MARKER}/$rel")
     } catch (_: Exception) { null }
 
+/**
+ * Like [findCorrespondingFile] but checks `build/patchedSrc/main/java/` instead of `src/main/java/`.
+ * Used when the class only exists as inherited content in patchedSrc (no trueSrc override).
+ */
+fun findCorrespondingPatchedFile(originFile: VirtualFile, originSrcRoot: VirtualFile, targetModuleRoot: VirtualFile): VirtualFile? =
+    try {
+        val rel = PathUtil.relativize(originSrcRoot.toNioPath(), originFile.toNioPath())
+        targetModuleRoot.findFileByRelativePath("${PathUtil.PATCHED_SRC_DIR}/${PathUtil.JAVA_SRC_SUBDIR}/$rel")
+    } catch (_: Exception) { null }
+
+// -- Path classification helpers ------------------------------------------------
+
+private const val PATCHED_MARKER = "/${PathUtil.PATCHED_SRC_DIR}/"
+private const val TRUE_SRC_MARKER = "/${PathUtil.TRUE_SRC_MARKER}/"
+
+/** Returns true if [normalizedPath] points inside a patchedSrc directory. */
+fun isInPatchedSrc(normalizedPath: String): Boolean =
+    normalizedPath.contains(PATCHED_MARKER)
+
+/**
+ * Returns the patchedSrc directory root (up to and including `build/patchedSrc`),
+ * or null if the path is not inside patchedSrc.
+ */
+fun patchedSrcRoot(normalizedPath: String): String? {
+    val idx = normalizedPath.indexOf(PATCHED_MARKER)
+    if (idx < 0) return null
+    return normalizedPath.substring(0, idx + PATCHED_MARKER.length - 1) // exclude trailing /
+}
+
+/**
+ * Returns the relative path inside a patchedSrc directory (after `build/patchedSrc/`),
+ * or null if [normalizedPath] is not under [patchedRoot].
+ */
+fun relInsidePatchedSrc(normalizedPath: String, patchedRoot: String): String? {
+    val prefix = patchedRoot.trimEnd('/') + "/"
+    return if (normalizedPath.startsWith(prefix)) normalizedPath.removePrefix(prefix) else null
+}
+
+/**
+ * Extracts the module root path from a patchedSrc root path.
+ * E.g. `.../1.21.1/fabric/build/patchedSrc` -> `.../1.21.1/fabric`
+ */
+fun moduleRootFromPatchedSrc(patchedRoot: String): String =
+    patchedRoot.substringBeforeLast("/${PathUtil.PATCHED_SRC_DIR}")
+
+/**
+ * Parses a trueSrc file path into its module root and relative class path.
+ * Returns null if the path does not contain a trueSrc marker.
+ */
+fun parseTrueSrcPath(normalizedPath: String): TrueSrcPathInfo? {
+    val markerIdx = normalizedPath.indexOf(TRUE_SRC_MARKER)
+    if (markerIdx < 0) return null
+    return TrueSrcPathInfo(
+        moduleRootPath = normalizedPath.substring(0, markerIdx),
+        relClassPath = normalizedPath.substring(markerIdx + TRUE_SRC_MARKER.length)
+    )
+}
+
+data class TrueSrcPathInfo(
+    val moduleRootPath: String,
+    val relClassPath: String,
+)
+

@@ -31,7 +31,7 @@ class CachedOriginMap {
         return map
     }
 
-    /** Drops the cached entry for [file] so the next [get] re-parses it. */
+    /** Drops the cached entry for [file] so the next [get] reparses it. */
     fun invalidate(file: File) {
         cache.remove(file.canonicalPath)
     }

@@ -17,6 +17,10 @@ public class ModTemplateMod {
 
     }
 
+    public static void foo(int i) {
+
+    }
+
     public void TBDeleted() {
         
     }

@@ -12,11 +12,14 @@
 
 <h3>IDE Features</h3>
 <ul>
-  <li><strong>Live patchedSrc updates:</strong> saves, structural edits (adding/removing members), new file creation, and file deletion all trigger an immediate re-merge of patchedSrc with cascading to downstream versions. Run <code>generateAllPatchedSrc</code> manually only for a full codebase refresh.</li>
-  <li>Go to Declaration navigates to the correct original source file and line.</li>
-  <li>Find Usages searches patchedSrc and maps results back to real source files.</li>
-  <li>Suppresses false errors caused by multiple source sets and compile-time-only annotations.</li>
-  <li>Refactoring support: renames and moves propagate across all version modules.</li>
+  <li><strong>Live patchedSrc updates:</strong> saves, structural edits, file creation, and file deletion trigger an immediate re-merge with cascading to downstream versions.</li>
+  <li><strong>Version navigation:</strong> <code>Alt+W</code> / <code>Alt+S</code> to jump upstream/downstream. Context-sensitive: navigates the member at cursor, or the class.</li>
+  <li><strong>All-versions popup:</strong> <code>Alt+Shift+V</code> shows every version of the current member or class with status labels.</li>
+  <li><strong>Gutter icons:</strong> up/down arrows on annotated members and members overridden downstream for quick navigation.</li>
+  <li><strong>Error suppression:</strong> hides false duplicate class errors, uninitialized field warnings on shadow members, and other false positives.</li>
+  <li><strong>Annotation validation:</strong> validates descriptor strings and flags missing annotations on members that exist in the base version.</li>
+  <li><strong>Navigation:</strong> Go to Declaration and Find Usages work correctly across version layers via patchedSrc remapping.</li>
+  <li><strong>Refactoring:</strong> renames and moves propagate across all version modules, including descriptor strings in annotations.</li>
 </ul>
 
 <p>

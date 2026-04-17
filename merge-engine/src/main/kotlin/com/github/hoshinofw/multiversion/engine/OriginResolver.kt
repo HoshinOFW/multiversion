@@ -61,4 +61,15 @@ class OriginResolver(
         }
         return ResolvedOrigin("$baseRelRoot/$rel", 0, 0)
     }
+
+    /**
+     * Resolves origins for all members in a file. Returns a map from member descriptor
+     * to [ResolvedOrigin]. Excludes rename tracking entries.
+     */
+    fun resolveAllMembers(rel: String): Map<String, ResolvedOrigin> {
+        return originMap.getMembersForFile(rel).mapValues { (_, raw) ->
+            val (path, line, col) = OriginMap.parseValue(raw)
+            ResolvedOrigin(path, line, col)
+        }
+    }
 }

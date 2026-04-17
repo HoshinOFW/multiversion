@@ -9,9 +9,6 @@ import com.intellij.psi.*
 import com.intellij.psi.codeStyle.JavaCodeStyleManager
 import com.intellij.psi.util.PsiTreeUtil
 
-private const val OVERWRITE_FQN = "com.github.hoshinofw.multiversion.OverwriteVersion"
-private const val SHADOW_FQN = "com.github.hoshinofw.multiversion.ShadowVersion"
-
 private const val MULTIVERSION_PACKAGE = "com.github.hoshinofw.multiversion."
 
 /** Annotations that should never be suggested as "missing". */
@@ -99,7 +96,12 @@ private class AddOriginalAnnotationsFix(
         for (i in annotationTexts.indices) {
             val fqn = annotationFqns[i]
             if (modList.hasAnnotation(fqn)) continue
-            val annotation = factory.createAnnotationFromText(annotationTexts[i], member)
+            // Create with FQN so shortenClassReferences adds the missing import.
+            // Preserve the original annotation arguments verbatim.
+            val originalText = annotationTexts[i]
+            val parenIdx = originalText.indexOf('(')
+            val fqnText = if (parenIdx >= 0) "@$fqn${originalText.substring(parenIdx)}" else "@$fqn"
+            val annotation = factory.createAnnotationFromText(fqnText, member)
             modList.addBefore(annotation, modList.annotations.firstOrNull() ?: modList.firstChild)
         }
 

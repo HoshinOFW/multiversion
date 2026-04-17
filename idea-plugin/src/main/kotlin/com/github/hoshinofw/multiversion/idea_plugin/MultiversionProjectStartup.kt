@@ -29,7 +29,7 @@ class MultiversionProjectStartup : ProjectActivity {
                         if (!file.path.replace('\\', '/').contains("/src/main/java/")) continue
                         val path = file.path
                         AppExecutorUtil.getAppExecutorService().execute {
-                            updatePatchedSrcForDeletion(path)
+                            updatePatchedSrcForDeletion(path, project)
                         }
                     }
                 }

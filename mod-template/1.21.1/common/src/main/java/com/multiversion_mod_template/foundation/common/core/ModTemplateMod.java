@@ -9,20 +9,20 @@ import org.slf4j.Logger;
 
 @DeleteMethodsAndFields({"TBDeleted"})
 public abstract class ModTemplateMod {
-    @NotNull
-    @ShadowVersion
-    public static final String MOD_ID;
 
+//    @ShadowVersion
+//    @NotNull
+//    public static final String MOD_ID;
+//
+//    @ShadowVersion
+//    public static final Logger LOGGER;
+    
     @ShadowVersion
-    public static final Logger LOGGER;
- 
-    @OverwriteVersion
     @ModifySignature("init")
-    public static void init() {
-        LOGGER.info("Initialized: version=1.21.1");
-        int i = SuperCoolClass.i;
-        //Common init code would go here.
-        //Registry initialization/subscription...
-    }
+    public static void init2();
+    
+    @ShadowVersion
+    @ModifySignature("foo")
+    public static void foo(boolean b);
 
 }

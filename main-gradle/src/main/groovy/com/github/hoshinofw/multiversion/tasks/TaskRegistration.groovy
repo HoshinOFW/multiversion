@@ -1,6 +1,6 @@
 package com.github.hoshinofw.multiversion.tasks
 
-import com.github.hoshinofw.multiversion.MultiversionModulesExtension
+import com.github.hoshinofw.multiversion.MultiversionProjectExtension
 import com.github.hoshinofw.multiversion.util.GeneralUtil
 import org.gradle.api.Project
 import org.gradle.api.Task
@@ -13,7 +13,7 @@ class TaskRegistration {
     }
 
     private static void registerWiredTasks(Project root) {
-        def ext = root.extensions.findByType(MultiversionModulesExtension)
+        def ext = root.extensions.findByType(MultiversionProjectExtension)
         if (ext == null || ext._wiredTasks.isEmpty()) return
 
         def versionedSubs = root.subprojects.findAll { Project sp ->

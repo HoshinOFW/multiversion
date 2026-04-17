@@ -72,6 +72,6 @@ class MultiversionPsiStructureListener(private val project: Project) : PsiTreeCh
         val text = ReadAction.compute<String?, Throwable> {
             FileDocumentManager.getInstance().getDocument(vFile)?.text
         } ?: return
-        updatePatchedSrcWithCascade(vFile, text)
+        updatePatchedSrcWithCascade(vFile, text, project)
     }
 }
