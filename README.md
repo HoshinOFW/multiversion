@@ -523,11 +523,11 @@ This task also runs automatically on build, so compilation always uses the lates
 
 An IntelliJ IDEA plugin is available on the JetBrains Marketplace, simply called Minecraft Multiversion Modding. It is strongly recommended. Without it you will run into false duplicate class errors and broken navigation caused by the multiple source sets.
 
-- **Error suppression**: Hides false duplicate class errors, uninitialized field warnings on `@ShadowVersion` members, and other false positives caused by the version layering system.
-- **Version navigation**: `Alt+W` / `Alt+S` to jump upstream/downstream. Context-sensitive: navigates the member at cursor, or the class if not on a member. Replaces the current tab in-place.
-- **All-versions popup**: `Alt+Shift+V` shows every version of the current member or class with status labels. Click to navigate.
-- **Gutter icons**: Up/down arrows next to annotated members and members overridden downstream. Click to navigate.
-- **Annotation validation**: Validates `@DeleteMethodsAndFields`, `@ModifySignature`, and other descriptor strings against the actual members in the previous version. Flags missing `@OverwriteVersion`/`@ShadowVersion` on members that exist in the base.
+- **Error suppression**: Hides false duplicate class errors, uninitialized field warnings on `@ShadowVersion` members, and "missing method body" errors on bodyless stubs whose counterpart exists in a previous version. The remaining quick fix on such stubs is the correct one (add `@ShadowVersion` / `@OverwriteVersion`).
+- **Version navigation**: `Alt+W` / `Alt+S` to jump upstream/downstream. Context-sensitive: navigates the member at cursor, or the class if not on a member. The arrow only appears when a trueSrc version exists in that direction, potentially multiple versions away, and follows `@ModifySignature` rename chains automatically. Replaces the current tab in-place.
+- **All-versions popup**: `Alt+Shift+V` shows every version of the current member or class. Labels display the multiversion annotations declared in that version (`@OverwriteVersion`, `@ShadowVersion`, `@ModifySignature`, `(new)`, `(base)`) using the editor's annotation colour; inherited and absent versions are greyed. Class-level entries show the trueSrc filename per version.
+- **Gutter icons**: Up and down arrows appear independently when there is a trueSrc version in that direction at any distance. Click to navigate.
+- **Annotation validation**: Validates `@DeleteMethodsAndFields`, `@ModifySignature`, and other descriptor strings against the actual members in the previous version. Flags missing `@OverwriteVersion`/`@ShadowVersion` on members that exist in the base; the quick fix adds the annotation and its import.
 - **Refactoring**: Renames propagate across all versions and patchedSrc, including descriptor strings in annotations.
 - **Find Usages**: Searches across patchedSrc and remaps results back to trueSrc. The inline "n usages" code lens may show an incorrect count due to an IntelliJ limitation, but clicking it runs the correct search.
 
