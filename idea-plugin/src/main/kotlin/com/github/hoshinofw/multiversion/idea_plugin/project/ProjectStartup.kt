@@ -1,5 +1,7 @@
-package com.github.hoshinofw.multiversion.idea_plugin
+package com.github.hoshinofw.multiversion.idea_plugin.project
 
+import com.github.hoshinofw.multiversion.idea_plugin.sync.PsiStructureListener
+import com.github.hoshinofw.multiversion.idea_plugin.sync.updatePatchedSrcForDeletion
 import com.intellij.codeInsight.hints.codeVision.DaemonBoundCodeVisionProvider
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
@@ -11,10 +13,10 @@ import com.intellij.psi.PsiManager
 import com.intellij.util.concurrency.AppExecutorUtil
 
 /** Registers project-scoped listeners that cannot be declared in plugin.xml. */
-class MultiversionProjectStartup : ProjectActivity {
+class ProjectStartup : ProjectActivity {
     override suspend fun execute(project: Project) {
         PsiManager.getInstance(project).addPsiTreeChangeListener(
-            MultiversionPsiStructureListener(project),
+            PsiStructureListener(project),
             project,   // disposable parent — listener is removed when project closes
         )
         DaemonBoundCodeVisionProvider

@@ -1,5 +1,10 @@
-package com.github.hoshinofw.multiversion.idea_plugin
+package com.github.hoshinofw.multiversion.idea_plugin.navigation
 
+import com.github.hoshinofw.multiversion.idea_plugin.engine.MergeEngineCache
+import com.github.hoshinofw.multiversion.idea_plugin.util.findMemberByKey
+import com.github.hoshinofw.multiversion.idea_plugin.util.memberKey
+import com.github.hoshinofw.multiversion.idea_plugin.util.patchedSrcLocation
+import com.github.hoshinofw.multiversion.idea_plugin.util.resolveOriginPathToVirtualFile
 import com.intellij.find.findUsages.FindUsagesHandler
 import com.intellij.find.findUsages.FindUsagesOptions
 import com.intellij.openapi.application.ReadAction
@@ -23,11 +28,10 @@ class PatchedSrcFindUsagesHandler(
         options: FindUsagesOptions,
     ): Boolean {
         val project = psiElement.project
-        val cache   = OriginMapCache.getInstance(project)
 
         ReferencesSearch.search(patchedElement, patchedSrcScope).forEach { ref ->
             val usage = ReadAction.compute<UsageInfo?, Throwable> {
-                mapToRealSource(ref, project, cache)
+                mapToRealSource(ref, project)
             } ?: return@forEach
             if (!processor.process(usage)) return false
         }
@@ -45,15 +49,19 @@ class PatchedSrcFindUsagesHandler(
      * For file-level refs (imports, class refs): uses text offset directly since non-merged
      * files are byte-identical copies.
      */
-    private fun mapToRealSource(ref: PsiReference, project: Project, cache: OriginMapCache): UsageInfo {
+    private fun mapToRealSource(ref: PsiReference, project: Project): UsageInfo {
         val refElement = ref.element
         val refFile    = refElement.containingFile?.virtualFile ?: return UsageInfo(refElement)
 
+        val loc = patchedSrcLocation(refFile) ?: return UsageInfo(refElement)
+        val resolver = MergeEngineCache.resolverForModuleRoot(loc.moduleRoot) ?: return UsageInfo(refElement)
+
         val memberKey = surroundingMemberKey(refElement)
         if (memberKey != null) {
-            val entry = cache.mapMemberToOrigin(refFile, memberKey)
-            if (entry != null) {
-                val originPsiFile = PsiManager.getInstance(project).findFile(entry.file)
+            val resolved = resolver.resolveMember(loc.relKey, memberKey)
+            val originVf = resolveOriginPathToVirtualFile(resolved.originPath, loc.moduleRoot, project)
+            if (originVf != null) {
+                val originPsiFile = PsiManager.getInstance(project).findFile(originVf)
                     ?: return UsageInfo(refElement)
 
                 val enclosing = PsiTreeUtil.getParentOfType(refElement, PsiMethod::class.java, false)
@@ -72,8 +80,10 @@ class PatchedSrcFindUsagesHandler(
         }
 
         // File-level fallback: text offset works for verbatim copies
-        val originFile = cache.mapToOrigin(refFile) ?: return UsageInfo(refElement)
-        val originPsiFile = PsiManager.getInstance(project).findFile(originFile)
+        val resolvedFile = resolver.resolveFile(loc.relKey)
+        val originVf = resolveOriginPathToVirtualFile(resolvedFile.originPath, loc.moduleRoot, project)
+            ?: return UsageInfo(refElement)
+        val originPsiFile = PsiManager.getInstance(project).findFile(originVf)
             ?: return UsageInfo(refElement)
         val originElement = originPsiFile.findElementAt(refElement.textOffset)
         return UsageInfo(originElement ?: refElement)

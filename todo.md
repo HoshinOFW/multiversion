@@ -121,13 +121,6 @@ Patches origin map TSV by rel path. @ModifyClass file's origin entries are keyed
 - Deleting classes is not always updating patchedSrc.
 - Going upstream from 1.21.11 ModTemplateMod class is leading me to 1.21.1 patchedSrc
   - Seems fixed, keep testing.
-- @ModifySignature but no @OverwriteVersion requires @ShadowVersion and native or abstract keyword.
-  - This makes sense and is intended behavior in trueSrc, but creates a compile error in patchedSrc:
-    - @ModifySignature carries over the native keyword, while @ShadowVersion carries over the method body from a previous version
-    - So patchedSrc ends up with native keyword + a method body. Native keyword could be intended, while method body is 100% intended in this case.
-    - Therefore, my proposal: Ditch relying on native keyword or abstract keyword to avoid an IDE error.
-      - Suppress "Missing method body, or declare abstract" error fully, and allow @ShadowVersion public static void foo(); 
-    - Better than the alternative of adding parameters to @ModifySignature to explicitly add native or abstract keyword and just strip them if not.
 
 
 ### Test:

@@ -1,7 +1,10 @@
-package com.github.hoshinofw.multiversion.idea_plugin
+package com.github.hoshinofw.multiversion.idea_plugin.inspection
 
-import com.github.hoshinofw.multiversion.engine.InitTarget
 import com.github.hoshinofw.multiversion.engine.MemberDescriptor
+import com.github.hoshinofw.multiversion.idea_plugin.util.descriptorParamsMatch
+import com.github.hoshinofw.multiversion.idea_plugin.util.findPreviousVersionClass
+import com.github.hoshinofw.multiversion.idea_plugin.util.isMultiversionProject
+import com.github.hoshinofw.multiversion.idea_plugin.util.resolveDescriptorInClass
 import com.intellij.codeInspection.LocalInspectionTool
 import com.intellij.codeInspection.ProblemsHolder
 import com.intellij.openapi.util.TextRange

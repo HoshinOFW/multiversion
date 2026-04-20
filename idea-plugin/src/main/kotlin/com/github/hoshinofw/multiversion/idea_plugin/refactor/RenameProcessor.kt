@@ -1,6 +1,10 @@
-package com.github.hoshinofw.multiversion.idea_plugin
+package com.github.hoshinofw.multiversion.idea_plugin.refactor
 
 import com.github.hoshinofw.multiversion.engine.PathUtil
+import com.github.hoshinofw.multiversion.idea_plugin.inspection.DescriptorReference
+import com.github.hoshinofw.multiversion.idea_plugin.inspection.isDescriptorAnnotation
+import com.github.hoshinofw.multiversion.idea_plugin.project.PluginSettings
+import com.github.hoshinofw.multiversion.idea_plugin.util.*
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.project.Project
 import com.intellij.psi.*
@@ -36,7 +40,7 @@ class MultiversionRenameProcessor : RenamePsiElementProcessor() {
         allRenames: MutableMap<PsiElement, String>,
         scope: SearchScope
     ) {
-        if (!MultiversionSettings.getInstance().propagateRefactoring) return
+        if (!PluginSettings.getInstance().propagateRefactoring) return
 
         val file       = element.containingFile?.virtualFile ?: return
         val srcRoot    = getVersionedSourceRoot(file)        ?: return
@@ -189,7 +193,7 @@ private class MultiversionRenameDialog(
     override fun createCenterPanel(): JComponent {
         val cb = JBCheckBox(
             "Propagate to other Minecraft versions",
-            MultiversionSettings.getInstance().propagateRefactoring
+            PluginSettings.getInstance().propagateRefactoring
         )
         propagateCheckBox = cb
         val superPanel = super.createCenterPanel()
@@ -201,7 +205,7 @@ private class MultiversionRenameDialog(
 
     override fun doAction() {
         propagateCheckBox?.let {
-            MultiversionSettings.getInstance().propagateRefactoring = it.isSelected
+            PluginSettings.getInstance().propagateRefactoring = it.isSelected
         }
         super.doAction()
     }

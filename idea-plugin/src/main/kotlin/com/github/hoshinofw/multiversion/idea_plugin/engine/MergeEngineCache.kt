@@ -1,10 +1,8 @@
-package com.github.hoshinofw.multiversion.idea_plugin
+package com.github.hoshinofw.multiversion.idea_plugin.engine
 
-import com.github.hoshinofw.multiversion.engine.CachedOriginMap
-import com.github.hoshinofw.multiversion.engine.EngineConfig
-import com.github.hoshinofw.multiversion.engine.MergeEngine
-import com.github.hoshinofw.multiversion.engine.OriginMap
-import com.github.hoshinofw.multiversion.engine.PathUtil
+import com.github.hoshinofw.multiversion.engine.*
+import com.github.hoshinofw.multiversion.idea_plugin.util.VersionContext
+import com.github.hoshinofw.multiversion.idea_plugin.util.getVersionedModuleRoot
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
 import java.io.File
@@ -21,7 +19,7 @@ import java.util.concurrent.ConcurrentHashMap
  * Cache entries are invalidated automatically when the file's `lastModified`
  * timestamp changes (i.e. after a Gradle sync).
  */
-object EngineConfigCache {
+object MergeEngineCache {
 
     private data class Entry(val config: EngineConfig, val lastModified: Long)
     private data class SynthEntry(val map: OriginMap, val trueSrcDirStamp: Long)
@@ -74,6 +72,17 @@ object EngineConfigCache {
     fun originMapForModuleRoot(moduleRoot: VirtualFile): OriginMap? {
         val mapFile = File(moduleRoot.path, "${PathUtil.PATCHED_SRC_DIR}/${PathUtil.ORIGIN_MAP_FILENAME}")
         return originMapCache.get(mapFile)
+    }
+
+    /**
+     * Returns an [OriginResolver] wrapping the cached origin map for [moduleRoot] and the
+     * module's `baseRelRoot` from its [EngineConfig]. Returns null when either is missing.
+     * `OriginResolver` is a thin wrapper; callers should rebuild rather than cache it.
+     */
+    fun resolverForModuleRoot(moduleRoot: VirtualFile): OriginResolver? {
+        val map = originMapForModuleRoot(moduleRoot) ?: return null
+        val baseRelRoot = forModuleRoot(moduleRoot)?.baseRelRoot ?: ""
+        return OriginResolver(map, baseRelRoot)
     }
 
     /**

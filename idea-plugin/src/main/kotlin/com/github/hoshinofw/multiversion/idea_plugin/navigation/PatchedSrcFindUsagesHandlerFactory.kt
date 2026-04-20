@@ -1,6 +1,8 @@
-package com.github.hoshinofw.multiversion.idea_plugin
+package com.github.hoshinofw.multiversion.idea_plugin.navigation
 
 import com.github.hoshinofw.multiversion.engine.PathUtil
+import com.github.hoshinofw.multiversion.idea_plugin.engine.MergeEngineCache
+import com.github.hoshinofw.multiversion.idea_plugin.util.*
 import com.intellij.find.findUsages.FindUsagesHandler
 import com.intellij.find.findUsages.FindUsagesHandlerFactory
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -27,7 +29,7 @@ class PatchedSrcFindUsagesHandlerFactory : FindUsagesHandlerFactory() {
         if (!isMultiversionProject(project)) return null
 
         val moduleRoot = getVersionedModuleRoot(file) ?: return null
-        val config     = EngineConfigCache.forModuleRoot(moduleRoot) ?: return null
+        val config     = MergeEngineCache.forModuleRoot(moduleRoot) ?: return null
         val sourceRoot = getVersionedSourceRoot(file) ?: return null
 
         val rel = try {
@@ -49,7 +51,7 @@ class PatchedSrcFindUsagesHandlerFactory : FindUsagesHandlerFactory() {
         val allModuleRoots = findAllVersionModuleRootsAcrossProject(moduleRoot)
         val scopeParts = mutableListOf<GlobalSearchScope>()
         for (root in allModuleRoots) {
-            val rootConfig = EngineConfigCache.forModuleRoot(root)
+            val rootConfig = MergeEngineCache.forModuleRoot(root)
             val dir = if (rootConfig != null) {
                 lfs.findFileByIoFile(File(rootConfig.patchedOutDir))
             } else {

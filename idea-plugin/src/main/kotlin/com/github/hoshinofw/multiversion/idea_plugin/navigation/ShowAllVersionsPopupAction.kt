@@ -1,6 +1,8 @@
-package com.github.hoshinofw.multiversion.idea_plugin
+package com.github.hoshinofw.multiversion.idea_plugin.navigation
 
 import com.github.hoshinofw.multiversion.engine.OriginNavigation
+import com.github.hoshinofw.multiversion.idea_plugin.navigation.util.*
+import com.github.hoshinofw.multiversion.idea_plugin.util.isMultiversionProject
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonDataKeys

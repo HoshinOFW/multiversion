@@ -1,9 +1,11 @@
-package com.github.hoshinofw.multiversion.idea_plugin
+package com.github.hoshinofw.multiversion.idea_plugin.sync
 
 import com.github.hoshinofw.multiversion.engine.EngineConfig
 import com.github.hoshinofw.multiversion.engine.MergeEngine
 import com.github.hoshinofw.multiversion.engine.OriginMap
 import com.github.hoshinofw.multiversion.engine.PathUtil
+import com.github.hoshinofw.multiversion.idea_plugin.engine.MergeEngineCache
+import com.github.hoshinofw.multiversion.idea_plugin.util.*
 import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
@@ -31,7 +33,7 @@ internal fun updatePatchedSrcWithCascade(vFile: VirtualFile, content: String, pr
     val writtenFiles = mutableListOf<File>()
 
     // Update own patchedSrc if this is itself a patched version module.
-    val ownConfig = EngineConfigCache.forModuleRoot(moduleRoot)
+    val ownConfig = MergeEngineCache.forModuleRoot(moduleRoot)
     if (ownConfig != null) {
         val baseContent = readFileOrNull(File(ownConfig.baseDir, rel))
         val baseOriginMap = loadBaseOriginMap(ownConfig)
@@ -53,7 +55,7 @@ internal fun updatePatchedSrcWithCascade(vFile: VirtualFile, content: String, pr
     // patchedSrc output is ready before the next step reads it as its base).
     val sourcePath = Paths.get(sourceRoot.path).normalize()
     for (downstreamRoot in findLaterVersionModuleRoots(moduleRoot)) {
-        val downConfig = EngineConfigCache.forModuleRoot(downstreamRoot) ?: continue
+        val downConfig = MergeEngineCache.forModuleRoot(downstreamRoot) ?: continue
 
         val downCurrentContent = readFileOrNull(File(downConfig.currentSrcDir, rel))
         // If this downstream's base is exactly the file we are editing, feed it the
@@ -98,7 +100,7 @@ internal fun updatePatchedSrcForDeletion(deletedFilePath: String, project: Proje
 
     val writtenFiles = mutableListOf<File>()
 
-    val ownConfig = EngineConfigCache.forModuleRoot(moduleRoot)
+    val ownConfig = MergeEngineCache.forModuleRoot(moduleRoot)
     if (ownConfig != null) {
         try {
             MergeEngine.fileUpdatePatchedSrc(
@@ -113,7 +115,7 @@ internal fun updatePatchedSrcForDeletion(deletedFilePath: String, project: Proje
     }
 
     for (downstreamRoot in findLaterVersionModuleRoots(moduleRoot)) {
-        val downConfig = EngineConfigCache.forModuleRoot(downstreamRoot) ?: continue
+        val downConfig = MergeEngineCache.forModuleRoot(downstreamRoot) ?: continue
         try {
             MergeEngine.fileUpdatePatchedSrc(
                 File(downConfig.currentSrcDir, rel), File(downConfig.baseDir, rel),

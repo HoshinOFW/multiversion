@@ -13,59 +13,71 @@
 
     <extensions defaultExtensionNs="com.intellij">
         <notificationGroup id="Multiversion" displayType="BALLOON"/>
-        <daemon.highlightInfoFilter implementation="com.github.hoshinofw.multiversion.idea_plugin.OverwriteDuplicateClassHighlightFilter"/>
-        <daemon.highlightInfoFilter implementation="com.github.hoshinofw.multiversion.idea_plugin.ShadowVersionHighlightFilter"/>
-        <gotoDeclarationHandler implementation="com.github.hoshinofw.multiversion.idea_plugin.PatchedSrcGotoDeclarationHandler"/>
-        <psi.referenceContributor language="JAVA" implementation="com.github.hoshinofw.multiversion.idea_plugin.DescriptorReferenceContributor"/>
+        <daemon.highlightInfoFilter implementation="com.github.hoshinofw.multiversion.idea_plugin.highlight.DuplicateClassHighlightFilter"/>
+        <daemon.highlightInfoFilter implementation="com.github.hoshinofw.multiversion.idea_plugin.highlight.PriorVersionMemberHighlightFilter"/>
+        <gotoDeclarationHandler implementation="com.github.hoshinofw.multiversion.idea_plugin.navigation.PatchedSrcGotoDeclarationHandler"/>
+        <psi.referenceContributor language="JAVA" implementation="com.github.hoshinofw.multiversion.idea_plugin.inspection.DescriptorReferenceContributor"/>
         <localInspection language="JAVA"
                          displayName="Descriptor annotation validation"
                          groupName="Multiversion"
                          enabledByDefault="true"
                          level="ERROR"
-                         implementationClass="com.github.hoshinofw.multiversion.idea_plugin.DescriptorAnnotationInspection"/>
+                         implementationClass="com.github.hoshinofw.multiversion.idea_plugin.inspection.DescriptorAnnotationInspection"/>
         <localInspection language="JAVA"
                          displayName="Missing original annotations"
                          groupName="Multiversion"
                          enabledByDefault="true"
                          level="WARNING"
-                         implementationClass="com.github.hoshinofw.multiversion.idea_plugin.MissingOriginalAnnotationsInspection"/>
+                         implementationClass="com.github.hoshinofw.multiversion.idea_plugin.inspection.MissingOriginalAnnotationsInspection"/>
         <localInspection language="JAVA"
                          displayName="Missing explicit multiversion annotation"
                          groupName="Multiversion"
                          enabledByDefault="true"
                          level="ERROR"
-                         implementationClass="com.github.hoshinofw.multiversion.idea_plugin.MissingExplicitAnnotationInspection"/>
-        <applicationService serviceImplementation="com.github.hoshinofw.multiversion.idea_plugin.MultiversionSettings"/>
+                         implementationClass="com.github.hoshinofw.multiversion.idea_plugin.inspection.MissingExplicitAnnotationInspection"/>
+        <localInspection language="JAVA"
+                         displayName="@ShadowVersion member has a body"
+                         groupName="Multiversion"
+                         enabledByDefault="true"
+                         level="WARNING"
+                         implementationClass="com.github.hoshinofw.multiversion.idea_plugin.inspection.ShadowVersionBodyInspection"/>
+        <localInspection language="JAVA"
+                         displayName="@ModifySignature validation"
+                         groupName="Multiversion"
+                         enabledByDefault="true"
+                         level="ERROR"
+                         implementationClass="com.github.hoshinofw.multiversion.idea_plugin.inspection.ModifySignatureInspection"/>
+        <applicationService serviceImplementation="com.github.hoshinofw.multiversion.idea_plugin.project.PluginSettings"/>
         <applicationConfigurable parentId="tools"
-                                 instance="com.github.hoshinofw.multiversion.idea_plugin.MultiversionConfigurable"
+                                 instance="com.github.hoshinofw.multiversion.idea_plugin.project.PluginConfigurable"
                                  id="com.github.hoshinofw.multiversion.settings"
                                  displayName="Multiversion"/>
-        <renamePsiElementProcessor implementation="com.github.hoshinofw.multiversion.idea_plugin.MultiversionRenameProcessor"
+        <renamePsiElementProcessor implementation="com.github.hoshinofw.multiversion.idea_plugin.refactor.MultiversionRenameProcessor"
                                    order="first"/>
-        <findUsagesHandlerFactory implementation="com.github.hoshinofw.multiversion.idea_plugin.PatchedSrcFindUsagesHandlerFactory"
+        <findUsagesHandlerFactory implementation="com.github.hoshinofw.multiversion.idea_plugin.navigation.PatchedSrcFindUsagesHandlerFactory"
         />
-        <postStartupActivity implementation="com.github.hoshinofw.multiversion.idea_plugin.MultiversionProjectStartup"/>
+        <postStartupActivity implementation="com.github.hoshinofw.multiversion.idea_plugin.project.ProjectStartup"/>
         <codeInsight.lineMarkerProvider language="JAVA"
-                                        implementationClass="com.github.hoshinofw.multiversion.idea_plugin.VersionNavigationLineMarkerProvider"/>
+                                        implementationClass="com.github.hoshinofw.multiversion.idea_plugin.navigation.VersionNavigationLineMarkerProvider"/>
     </extensions>
 
     <actions>
         <group id="multiversion.NavigationGroup" text="Multiversion Navigation"
                description="Navigate between Minecraft version sources">
             <action id="multiversion.NavigateUpstream"
-                    class="com.github.hoshinofw.multiversion.idea_plugin.NavigateUpstreamAction"
+                    class="com.github.hoshinofw.multiversion.idea_plugin.navigation.NavigateUpstreamAction"
                     text="Go to Upstream Version"
                     description="Navigate to the same element in the previous (older) version">
                 <keyboard-shortcut keymap="$default" first-keystroke="alt W"/>
             </action>
             <action id="multiversion.NavigateDownstream"
-                    class="com.github.hoshinofw.multiversion.idea_plugin.NavigateDownstreamAction"
+                    class="com.github.hoshinofw.multiversion.idea_plugin.navigation.NavigateDownstreamAction"
                     text="Go to Downstream Version"
                     description="Navigate to the same element in the next (newer) version">
                 <keyboard-shortcut keymap="$default" first-keystroke="alt S"/>
             </action>
             <action id="multiversion.ShowAllVersions"
-                    class="com.github.hoshinofw.multiversion.idea_plugin.ShowAllVersionsPopupAction"
+                    class="com.github.hoshinofw.multiversion.idea_plugin.navigation.ShowAllVersionsPopupAction"
                     text="Show All Versions"
                     description="Show all versions of the current member or class">
                 <keyboard-shortcut keymap="$default" first-keystroke="alt shift V"/>
@@ -75,14 +87,14 @@
     </actions>
 
     <applicationListeners>
-        <listener class="com.github.hoshinofw.multiversion.idea_plugin.MultiversionOnSaveListener"
+        <listener class="com.github.hoshinofw.multiversion.idea_plugin.sync.OnSaveListener"
                   topic="com.intellij.openapi.fileEditor.FileDocumentManagerListener"/>
     </applicationListeners>
 
     <projectListeners>
-        <listener class="com.github.hoshinofw.multiversion.idea_plugin.PatchedSrcEditorRedirectListener"
+        <listener class="com.github.hoshinofw.multiversion.idea_plugin.navigation.PatchedSrcEditorRedirectListener"
                   topic="com.intellij.openapi.fileEditor.FileEditorManagerListener"/>
-        <listener class="com.github.hoshinofw.multiversion.idea_plugin.MultiversionMoveListener"
+        <listener class="com.github.hoshinofw.multiversion.idea_plugin.refactor.MoveListener"
                   topic="com.intellij.refactoring.listeners.RefactoringEventListener"/>
     </projectListeners>
 </idea-plugin>

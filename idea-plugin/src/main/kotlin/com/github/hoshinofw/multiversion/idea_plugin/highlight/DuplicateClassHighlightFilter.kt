@@ -1,6 +1,8 @@
-package com.github.hoshinofw.multiversion.idea_plugin
+package com.github.hoshinofw.multiversion.idea_plugin.highlight
 
 import com.github.hoshinofw.multiversion.engine.VersionUtil
+import com.github.hoshinofw.multiversion.idea_plugin.util.isInPatchedSrc
+import com.github.hoshinofw.multiversion.idea_plugin.util.isMultiversionProject
 import com.intellij.codeInsight.daemon.impl.HighlightInfo
 import com.intellij.codeInsight.daemon.impl.HighlightInfoFilter
 import com.intellij.lang.annotation.HighlightSeverity
@@ -11,7 +13,7 @@ import com.intellij.psi.search.GlobalSearchScope
 
 private val VERSION_DIR_REGEX = Regex("/(${VersionUtil.VERSION_PATTERN.pattern})/")
 
-class OverwriteDuplicateClassHighlightFilter : HighlightInfoFilter {
+class DuplicateClassHighlightFilter : HighlightInfoFilter {
 
     override fun accept(info: HighlightInfo, file: PsiFile?): Boolean {
         val javaFile = file as? PsiJavaFile ?: return true

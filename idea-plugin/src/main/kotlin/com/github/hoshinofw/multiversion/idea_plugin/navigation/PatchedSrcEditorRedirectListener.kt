@@ -1,6 +1,8 @@
-package com.github.hoshinofw.multiversion.idea_plugin
+package com.github.hoshinofw.multiversion.idea_plugin.navigation
 
 import com.github.hoshinofw.multiversion.engine.PathUtil
+import com.github.hoshinofw.multiversion.idea_plugin.engine.MergeEngineCache
+import com.github.hoshinofw.multiversion.idea_plugin.util.*
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.fileEditor.FileEditorManager
@@ -29,7 +31,7 @@ class PatchedSrcEditorRedirectListener(private val project: Project) : FileEdito
             // Redirect patchedSrc opens to trueSrc
             ReadAction.nonBlocking<VirtualFile?> {
                 if (!isMultiversionProject(project)) null
-                else OriginMapCache.getInstance(project).mapToOrigin(file)
+                else resolvePatchedSrcOrigin(file)
             }
             .inSmartMode(project)
             .finishOnUiThread(ModalityState.defaultModalityState()) { origin ->
@@ -51,6 +53,13 @@ class PatchedSrcEditorRedirectListener(private val project: Project) : FileEdito
             .inSmartMode(project)
             .submit(AppExecutorUtil.getAppExecutorService())
         }
+    }
+
+    private fun resolvePatchedSrcOrigin(file: VirtualFile): VirtualFile? {
+        val loc = patchedSrcLocation(file) ?: return null
+        val resolver = MergeEngineCache.resolverForModuleRoot(loc.moduleRoot) ?: return null
+        val resolved = resolver.resolveFile(loc.relKey)
+        return resolveOriginPathToVirtualFile(resolved.originPath, loc.moduleRoot, project)
     }
 
     private fun prewarmAdjacentVersions(normPath: String) {

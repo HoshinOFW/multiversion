@@ -1,7 +1,12 @@
-package com.github.hoshinofw.multiversion.idea_plugin
+package com.github.hoshinofw.multiversion.idea_plugin.refactor
 
 import com.github.hoshinofw.multiversion.engine.OriginMap
 import com.github.hoshinofw.multiversion.engine.PathUtil
+import com.github.hoshinofw.multiversion.idea_plugin.project.PluginSettings
+import com.github.hoshinofw.multiversion.idea_plugin.util.findAllVersionModuleRoots
+import com.github.hoshinofw.multiversion.idea_plugin.util.getVersionedModuleRoot
+import com.github.hoshinofw.multiversion.idea_plugin.util.getVersionedSourceRoot
+import com.github.hoshinofw.multiversion.idea_plugin.util.isMultiversionProject
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.project.Project
@@ -11,7 +16,7 @@ import com.intellij.refactoring.listeners.RefactoringEventListener
 import com.intellij.refactoring.move.moveFilesOrDirectories.MoveFilesOrDirectoriesUtil
 import java.io.File
 
-class MultiversionMoveListener(private val project: Project) : RefactoringEventListener {
+class MoveListener(private val project: Project) : RefactoringEventListener {
 
     // ── Move state ────────────────────────────────────────────────────────────
 
@@ -109,7 +114,7 @@ class MultiversionMoveListener(private val project: Project) : RefactoringEventL
         val moves = pending.toList()
         pending.clear()
         if (moves.isEmpty()) return
-        if (!MultiversionSettings.getInstance().propagateRefactoring) return
+        if (!PluginSettings.getInstance().propagateRefactoring) return
 
         ApplicationManager.getApplication().invokeLater {
             WriteCommandAction.runWriteCommandAction(project, "Propagate move to later versions", null, {

@@ -1,4 +1,4 @@
-package com.github.hoshinofw.multiversion.idea_plugin
+package com.github.hoshinofw.multiversion.idea_plugin.navigation.util
 
 import com.github.hoshinofw.multiversion.engine.OriginFlag
 import com.github.hoshinofw.multiversion.engine.OriginMap
@@ -6,16 +6,12 @@ import com.github.hoshinofw.multiversion.engine.OriginNavigation
 import com.github.hoshinofw.multiversion.engine.OriginNavigation.TrueSrcClassHit
 import com.github.hoshinofw.multiversion.engine.OriginNavigation.TrueSrcMemberHit
 import com.github.hoshinofw.multiversion.engine.PathUtil
+import com.github.hoshinofw.multiversion.idea_plugin.engine.MergeEngineCache
+import com.github.hoshinofw.multiversion.idea_plugin.util.*
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.psi.PsiClass
-import com.intellij.psi.PsiElement
-import com.intellij.psi.PsiFile
-import com.intellij.psi.PsiJavaFile
-import com.intellij.psi.PsiManager
-import com.intellij.psi.PsiMember
-import com.intellij.psi.PsiNameIdentifierOwner
+import com.intellij.psi.*
 import java.io.File
 
 /**
@@ -41,7 +37,7 @@ internal data class NavigationContext(
 internal fun buildNavigationContext(file: VirtualFile): NavigationContext? {
     val ctx = resolveVersionContext(file.path) ?: return null
     val info = parseVersionedFileInfo(file.path, ctx) ?: return null
-    val maps = EngineConfigCache.allOriginMapsFor(ctx, info.moduleName)
+    val maps = MergeEngineCache.allOriginMapsFor(ctx, info.moduleName)
     return NavigationContext(ctx, info, maps)
 }
 
@@ -75,7 +71,6 @@ private fun trueSrcFileFor(nav: NavigationContext, versionIdx: Int): File {
 }
 
 private fun openPsiFile(project: Project, ioFile: File): PsiFile? {
-    if (!ioFile.exists()) return null
     val vf = LocalFileSystem.getInstance().findFileByIoFile(ioFile) ?: return null
     return PsiManager.getInstance(project).findFile(vf)
 }

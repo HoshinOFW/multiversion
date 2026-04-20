@@ -10,6 +10,7 @@
   <li><strong>BUG FIX</strong> <em>Add @OverwriteVersion</em> / <em>Add @ShadowVersion</em> / <em>Replace @ShadowVersion with @OverwriteVersion</em> / <em>Add original annotations</em> quick fixes now add the necessary imports if they are missing</li>
   <li><strong>BUG FIX</strong> <em>Missing method body, or declare abstract</em> error is now suppressed when the method matches a member in the previous version, so the <em>Add @ShadowVersion</em> quick fix is the only one offered on bodyless multiversion stubs</li>
   <li>Deleted navigation-only helpers from <code>VersionMemberUtil</code> (<code>hasAdjacentVersion</code>, <code>findAdjacentVersionClass</code>, <code>findAllVersionClasses</code>, <code>findAllVersionsOfMember</code>, <code>walkUpstream</code>/<code>walkDownstream</code>, <code>isOverriddenDownstream</code>); IDE navigation is now a thin adapter over the engine walker</li>
+  <li>Some refactors</li>
 </ul>
 
 <h2>0.6.0</h2>

@@ -1,5 +1,7 @@
-package com.github.hoshinofw.multiversion.idea_plugin
+package com.github.hoshinofw.multiversion.idea_plugin.navigation
 
+import com.github.hoshinofw.multiversion.idea_plugin.navigation.util.*
+import com.github.hoshinofw.multiversion.idea_plugin.util.isMultiversionProject
 import com.intellij.codeInsight.daemon.LineMarkerInfo
 import com.intellij.codeInsight.daemon.LineMarkerProvider
 import com.intellij.openapi.editor.markup.GutterIconRenderer

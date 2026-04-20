@@ -1,13 +1,15 @@
-package com.github.hoshinofw.multiversion.idea_plugin
+package com.github.hoshinofw.multiversion.idea_plugin.util
 
 import com.github.hoshinofw.multiversion.engine.PathUtil
 import com.github.hoshinofw.multiversion.engine.VersionUtil
 import com.github.hoshinofw.multiversion.engine.VersionUtil.compareVersions
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.JavaPsiFacade
 import com.intellij.psi.search.GlobalSearchScope
+import java.io.File
 
 private val VERSION_PATTERN = VersionUtil.VERSION_PATTERN
 
@@ -150,4 +152,52 @@ data class TrueSrcPathInfo(
     val moduleRootPath: String,
     val relClassPath: String,
 )
+
+/** A patchedSrc file's identity inside its version module. */
+data class PatchedSrcLocation(val moduleRoot: VirtualFile, val relKey: String)
+
+/**
+ * Resolves a patchedSrc [VirtualFile] to its owning module root plus the origin-map
+ * relative key (the path inside `build/patchedSrc`, minus the `main/java` or
+ * `main/resources` subdir). Returns null if [patchedFile] is not under any
+ * `build/patchedSrc` directory whose module root exists on disk.
+ */
+fun patchedSrcLocation(patchedFile: VirtualFile): PatchedSrcLocation? {
+    val normPath = patchedFile.path.replace('\\', '/')
+    val patchedRoot = patchedSrcRoot(normPath) ?: return null
+    val rel = relInsidePatchedSrc(normPath, patchedRoot) ?: return null
+    val relKey = rel.removePrefix("${PathUtil.JAVA_SRC_SUBDIR}/")
+                    .removePrefix("${PathUtil.RESOURCES_SRC_SUBDIR}/")
+    val moduleRoot = LocalFileSystem.getInstance().findFileByPath(moduleRootFromPatchedSrc(patchedRoot)) ?: return null
+    return PatchedSrcLocation(moduleRoot, relKey)
+}
+
+/**
+ * Resolves an origin-map relative path to a concrete [VirtualFile]. Absolute paths are
+ * looked up directly; relative paths are tried against the project base, the module
+ * root, its version directory, and the multiversion root in order, returning the first
+ * existing match.
+ */
+fun resolveOriginPathToVirtualFile(
+    originRel: String,
+    moduleRoot: VirtualFile,
+    project: Project,
+): VirtualFile? {
+    val lfs = LocalFileSystem.getInstance()
+    if (File(originRel).isAbsolute) return lfs.findFileByIoFile(File(originRel))
+
+    val moduleRootFile = File(moduleRoot.path)
+    val versionDir = moduleRootFile.parentFile
+    val multiversionRoot = versionDir?.parentFile
+
+    for (base in listOfNotNull(
+        project.basePath?.let { File(it) }?.takeIf { it.isDirectory },
+        moduleRootFile.takeIf { it.isDirectory },
+        versionDir?.takeIf { it.isDirectory },
+        multiversionRoot?.takeIf { it.isDirectory },
+    )) {
+        lfs.findFileByIoFile(File(base, originRel).normalize())?.let { return it }
+    }
+    return null
+}
 

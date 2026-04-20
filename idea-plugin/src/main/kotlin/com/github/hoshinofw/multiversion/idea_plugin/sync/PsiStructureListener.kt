@@ -1,5 +1,7 @@
-package com.github.hoshinofw.multiversion.idea_plugin
+package com.github.hoshinofw.multiversion.idea_plugin.sync
 
+
+import com.github.hoshinofw.multiversion.idea_plugin.util.getVersionedModuleRoot
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
@@ -9,8 +11,6 @@ import com.intellij.util.concurrency.AppExecutorUtil
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
-
-private const val DEBOUNCE_MS = 500L
 
 /**
  * Listens for PSI structural changes and triggers a patchedSrc update in the background
@@ -24,7 +24,7 @@ private const val DEBOUNCE_MS = 500L
  *  - Body-only edits (code changes inside an existing method body).
  *  - Entire file deletion (use @DeleteClass annotation then save instead).
  */
-class MultiversionPsiStructureListener(private val project: Project) : PsiTreeChangeAdapter() {
+class PsiStructureListener(private val project: Project) : PsiTreeChangeAdapter() {
 
     private val executor = AppExecutorUtil.getAppScheduledExecutorService()
     private val pending  = ConcurrentHashMap<String, ScheduledFuture<*>>()
@@ -75,3 +75,5 @@ class MultiversionPsiStructureListener(private val project: Project) : PsiTreeCh
         updatePatchedSrcWithCascade(vFile, text, project)
     }
 }
+
+private const val DEBOUNCE_MS = 500L

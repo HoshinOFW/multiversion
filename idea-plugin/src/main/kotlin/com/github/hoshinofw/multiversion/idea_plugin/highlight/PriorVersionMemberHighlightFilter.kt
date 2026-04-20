@@ -1,5 +1,9 @@
-package com.github.hoshinofw.multiversion.idea_plugin
+package com.github.hoshinofw.multiversion.idea_plugin.highlight
 
+import com.github.hoshinofw.multiversion.idea_plugin.util.SHADOW_FQN
+import com.github.hoshinofw.multiversion.idea_plugin.util.findMatchingMember
+import com.github.hoshinofw.multiversion.idea_plugin.util.findPreviousVersionClass
+import com.github.hoshinofw.multiversion.idea_plugin.util.isMultiversionProject
 import com.intellij.codeInsight.daemon.impl.HighlightInfo
 import com.intellij.codeInsight.daemon.impl.HighlightInfoFilter
 import com.intellij.lang.annotation.HighlightSeverity
@@ -9,7 +13,7 @@ import com.intellij.psi.util.PsiTreeUtil
 
 private val VARIABLE_NAME_PATTERN = Regex("""Variable '(\w+)'""")
 
-class ShadowVersionHighlightFilter : HighlightInfoFilter {
+class PriorVersionMemberHighlightFilter : HighlightInfoFilter {
     override fun accept(info: HighlightInfo, file: PsiFile?): Boolean {
         if (file == null) return true
         if (info.severity != HighlightSeverity.ERROR && info.severity != HighlightSeverity.WARNING) return true
