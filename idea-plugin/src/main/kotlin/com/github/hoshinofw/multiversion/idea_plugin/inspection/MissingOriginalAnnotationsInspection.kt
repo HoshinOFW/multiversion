@@ -1,14 +1,10 @@
 package com.github.hoshinofw.multiversion.idea_plugin.inspection
 
-import com.github.hoshinofw.multiversion.engine.OriginFlag
 import com.github.hoshinofw.multiversion.idea_plugin.util.*
-import com.intellij.codeInsight.intention.HighPriorityAction
-import com.intellij.codeInsight.intention.LowPriorityAction
 import com.intellij.codeInspection.LocalInspectionTool
 import com.intellij.codeInspection.LocalQuickFix
 import com.intellij.codeInspection.ProblemDescriptor
 import com.intellij.codeInspection.ProblemsHolder
-import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.project.Project
 import com.intellij.psi.*
 import com.intellij.psi.codeStyle.JavaCodeStyleManager
@@ -34,11 +30,14 @@ private val IGNORED_ANNOTATIONS = setOf(
  * annotation contract. The inspection reads the canonical annotations via
  * [MemberLookup.findSignatureAnchor] (routing + rename aware).
  *
- * Two quick fixes:
- * 1. Add the canonical's annotations to the current member.
- * 2. Propagate the current member's annotations to every other trueSrc declaration in the
- *    same lifetime (canonical + any `@ShadowVersion` / `@OverwriteVersion` / intermediate
- *    `@ModifySignature`-less siblings between anchor and next signature boundary).
+ * Scope is limited to `@ShadowVersion` / `@OverwriteVersion` members — members that claim
+ * to mirror an upstream signature. The symmetric case (the canonical declaration itself
+ * noticing that downstream siblings disagree) belongs to a separate inspection; see
+ * `todo.md` under "Observed Bugs" for the split plan.
+ *
+ * One quick fix: "Match to declaration" — add the canonical's annotations to the current
+ * member. The inverse direction (propagate annotations from the canonical to the rest of
+ * the lifetime) is the NEW/MODSIG inspection's job.
  */
 class MissingOriginalAnnotationsInspection : LocalInspectionTool() {
 
@@ -53,17 +52,19 @@ private fun checkMember(member: PsiMember, holder: ProblemsHolder) {
     if (!isMultiversionProject(member.project)) return
     val modList = (member as? PsiModifierListOwner)?.modifierList ?: return
 
+    // Gate: only fire on members that claim to mirror an upstream signature. NEW / MODSIG
+    // (signature-owner) cases are handled by a separate inspection — see todo.md.
     val hasOverwrite = modList.hasAnnotation(OVERWRITE_FQN)
     val hasShadow = modList.hasAnnotation(SHADOW_FQN)
+    if (!hasOverwrite && !hasShadow) return
 
-    // Signature-owner members (NEW / MODSIG in their own origin-map entry) also
-    // participate in the inspection: when siblings in their lifetime carry annotations
-    // the canonical is missing, the canonical's version is the one the user needs a
-    // marker on.
-    val currentFlags = MemberLookup.currentMemberFlags(member)
-    val currentIsSignatureOwner = OriginFlag.NEW in currentFlags || OriginFlag.MODSIG in currentFlags
+    val anchor = MemberLookup.findSignatureAnchor(member) ?: return
 
-    if (!hasOverwrite && !hasShadow && !currentIsSignatureOwner) return
+    val canonicalAnnotations = collectTransferableAnnotations(anchor.member)
+    val currentFqns = collectTransferableAnnotations(member).map { it.qualifiedName }.toSet()
+
+    val missing = canonicalAnnotations.filter { it.qualifiedName !in currentFqns }
+    if (missing.isEmpty()) return
 
     val nameElement = when (member) {
         is PsiMethod -> member.nameIdentifier ?: return
@@ -71,84 +72,94 @@ private fun checkMember(member: PsiMember, holder: ProblemsHolder) {
         else -> return
     }
 
-    val currentAnnotations = collectTransferableAnnotations(member)
-    val currentFqns = currentAnnotations.map { it.qualifiedName }.toSet()
-
-    if (currentIsSignatureOwner) {
-        // The caret IS the canonical. Fire when any sibling in the lifetime has
-        // transferable annotations the canonical doesn't — those are the ones the user
-        // probably wants to either adopt into the canonical or strip from the sibling.
-        val siblings = MemberLookup.findLifetimeDeclarations(member)
-        if (siblings.isEmpty()) return
-
-        val extrasAcrossSiblings = siblings
-            .flatMap { collectTransferableAnnotations(it.member) }
-            .filter { it.qualifiedName !in currentFqns }
-            .distinctBy { it.qualifiedName }
-        if (extrasAcrossSiblings.isEmpty()) return
-
-        holder.registerProblem(
-            nameElement,
-            "Siblings in the signature lifetime have annotations this canonical declaration is missing: " +
-                extrasAcrossSiblings.mapNotNull { it.qualifiedName }
-                    .joinToString(", ") { "@${it.substringAfterLast('.')}" },
-            AddOriginalAnnotationsFix(
-                extrasAcrossSiblings.map { it.text },
-                extrasAcrossSiblings.mapNotNull { it.qualifiedName },
-            ),
-            PropagateCurrentAnnotationsFix(),
-        )
-        return
-    }
-
-    // Shadow / Overwrite path: compare current to the upstream canonical.
-    val anchor = MemberLookup.findSignatureAnchor(member) ?: return
-    val canonicalAnnotations = collectTransferableAnnotations(anchor.member)
-
-    val missing = canonicalAnnotations.filter { it.qualifiedName !in currentFqns }
-    if (missing.isEmpty()) return
-
     val missingTexts = missing.map { it.text }
     val missingFqns = missing.mapNotNull { it.qualifiedName }
     holder.registerProblem(
         nameElement,
         "Missing original annotations: ${missingFqns.joinToString(", ") { "@${it.substringAfterLast('.')}" }}",
         AddOriginalAnnotationsFix(missingTexts, missingFqns),
-        PropagateCurrentAnnotationsFix(),
     )
 }
 
-/** Collects annotations from a member that should transfer, filtering out multiversion and ignored ones. */
+/**
+ * Collects annotations the inspection compares across versions. Looks in two positions:
+ *
+ * - The member's own modifier list (`@NotNull public static final String MOD_ID`).
+ * - The declared type element (`public static final @NotNull String MOD_ID`, or
+ *   `public @NotNull String getFoo()` for methods).
+ *
+ * Both positions are treated as equivalent for contract purposes: a member "has @NotNull"
+ * regardless of which slot it sits in. Duplicates by FQN across positions are collapsed
+ * (first occurrence wins for the annotation text that's re-emitted by fixes).
+ *
+ * Method parameter annotations are NOT included — they're positional (`@NotNull` on
+ * param 0 is a different claim than on param 1), so flattening them into a single set
+ * would silently miss transpositions. Including them correctly requires per-index
+ * comparison + per-index fix application; deferred until explicitly needed (see todo.md).
+ */
 private fun collectTransferableAnnotations(member: PsiMember): List<AnnotationInfo> {
-    val modList = (member as? PsiModifierListOwner)?.modifierList ?: return emptyList()
-    return modList.annotations.mapNotNull { annotation ->
-        val fqn = annotation.qualifiedName ?: return@mapNotNull null
-        if (fqn.startsWith(MULTIVERSION_PACKAGE)) return@mapNotNull null
-        if (fqn in IGNORED_ANNOTATIONS) return@mapNotNull null
-        AnnotationInfo(fqn, annotation.text)
+    val byFqn = LinkedHashMap<String, AnnotationInfo>()
+
+    fun consider(annotation: PsiAnnotation?) {
+        if (annotation == null) return
+        val fqn = annotation.qualifiedName ?: return
+        if (fqn.startsWith(MULTIVERSION_PACKAGE)) return
+        if (fqn in IGNORED_ANNOTATIONS) return
+        byFqn.getOrPut(fqn) { AnnotationInfo(fqn, annotation.text) }
     }
+
+    (member as? PsiModifierListOwner)?.modifierList?.annotations?.forEach { consider(it) }
+    memberTypeElement(member)?.annotations?.forEach { consider(it) }
+
+    return byFqn.values.toList()
+}
+
+/**
+ * The declared type element for a member whose type participates in the annotation
+ * contract — field type, method return type. Null for constructors and for members
+ * without a single declared type.
+ */
+private fun memberTypeElement(member: PsiMember): PsiTypeElement? = when (member) {
+    is PsiField -> member.typeElement
+    is PsiMethod -> member.returnTypeElement
+    else -> null
+}
+
+/**
+ * True if [member] already carries an annotation with [fqn] anywhere we'd consider a
+ * transferable slot (modifier list OR declared type element). Used by the quick fix so
+ * it doesn't append a duplicate modifier-list copy when the annotation already exists
+ * as a type-use.
+ */
+private fun memberHasTransferableAnnotation(member: PsiMember, fqn: String): Boolean {
+    val modList = (member as? PsiModifierListOwner)?.modifierList
+    if (modList?.hasAnnotation(fqn) == true) return true
+    return memberTypeElement(member)?.annotations?.any { it.qualifiedName == fqn } == true
 }
 
 private data class AnnotationInfo(val qualifiedName: String, val text: String)
 
-/** Adds annotations from the canonical declaration to the caret member (primary fix). */
+/** Adds annotations from the canonical declaration to the caret member. */
 private class AddOriginalAnnotationsFix(
     private val annotationTexts: List<String>,
     private val annotationFqns: List<String>,
-) : LocalQuickFix, HighPriorityAction {
+) : LocalQuickFix {
 
-    override fun getName(): String = "Match to other versions"
+    override fun getName(): String = "Match to declaration"
 
     override fun getFamilyName(): String = "Add original annotations"
 
     override fun applyFix(project: Project, descriptor: ProblemDescriptor) {
-        val member = PsiTreeUtil.getParentOfType(descriptor.psiElement, PsiModifierListOwner::class.java) ?: return
-        val modList = member.modifierList ?: return
+        val member = PsiTreeUtil.getParentOfType(descriptor.psiElement, PsiMember::class.java) ?: return
+        val modList = (member as? PsiModifierListOwner)?.modifierList ?: return
         val factory = JavaPsiFacade.getElementFactory(project)
 
         for (i in annotationTexts.indices) {
             val fqn = annotationFqns[i]
-            if (modList.hasAnnotation(fqn)) continue
+            // Skip if already present anywhere on the member — modifier list OR type-use
+            // slot (e.g. `public @NotNull String getFoo()` already has it on the return
+            // type; no need to add a duplicate at modifier position).
+            if (memberHasTransferableAnnotation(member, fqn)) continue
             // Create with FQN so shortenClassReferences adds the missing import.
             // Preserve the original annotation arguments verbatim.
             val originalText = annotationTexts[i]
@@ -160,66 +171,4 @@ private class AddOriginalAnnotationsFix(
 
         JavaCodeStyleManager.getInstance(project).shortenClassReferences(modList)
     }
-}
-
-/**
- * Propagates the caret member's transferable annotations to every other trueSrc
- * declaration in the same signature lifetime (canonical anchor + every declaration in
- * `[anchor, nextSignature)` except the caret itself).
- *
- * Keeps each target's own multiversion / ignored annotations intact; replaces only the
- * "transferable" annotation set so the lifetime's annotation contract converges on what
- * the current version declares.
- */
-private class PropagateCurrentAnnotationsFix : LocalQuickFix, LowPriorityAction {
-
-    override fun getName(): String = "Make other versions match"
-
-    override fun getFamilyName(): String = "Propagate annotations across lifetime"
-
-    override fun applyFix(project: Project, descriptor: ProblemDescriptor) {
-        val member = PsiTreeUtil.getParentOfType(descriptor.psiElement, PsiMember::class.java) ?: return
-        val currentTransferable = collectTransferableAnnotations(member)
-
-        val targets = MemberLookup.findLifetimeDeclarations(member)
-        if (targets.isEmpty()) return
-
-        val affectedFiles = targets.map { it.file }.distinct().toTypedArray()
-        WriteCommandAction.runWriteCommandAction(project, "Propagate Annotations Across Signature Lifetime", "Multiversion", {
-            for (target in targets) {
-                applyAnnotationsTo(project, target.member, currentTransferable)
-            }
-        }, *affectedFiles)
-    }
-
-    private fun applyAnnotationsTo(
-        project: Project,
-        target: PsiMember,
-        desired: List<AnnotationInfo>,
-    ) {
-        val modList = (target as? PsiModifierListOwner)?.modifierList ?: return
-        val factory = JavaPsiFacade.getElementFactory(project)
-        val desiredFqns = desired.map { it.qualifiedName }.toSet()
-
-        // Remove existing transferable annotations that aren't in `desired`.
-        for (existing in modList.annotations.toList()) {
-            val fqn = existing.qualifiedName ?: continue
-            if (fqn.startsWith(MULTIVERSION_PACKAGE)) continue
-            if (fqn in IGNORED_ANNOTATIONS) continue
-            if (fqn !in desiredFqns) existing.delete()
-        }
-
-        // Add desired annotations that aren't already on the target.
-        for (ann in desired) {
-            if (modList.hasAnnotation(ann.qualifiedName)) continue
-            val parenIdx = ann.text.indexOf('(')
-            val fqnText = if (parenIdx >= 0) "@${ann.qualifiedName}${ann.text.substring(parenIdx)}" else "@${ann.qualifiedName}"
-            val annotation = factory.createAnnotationFromText(fqnText, target)
-            modList.addBefore(annotation, modList.annotations.firstOrNull() ?: modList.firstChild)
-        }
-
-        JavaCodeStyleManager.getInstance(project).shortenClassReferences(modList)
-    }
-
-    override fun startInWriteAction(): Boolean = false
 }

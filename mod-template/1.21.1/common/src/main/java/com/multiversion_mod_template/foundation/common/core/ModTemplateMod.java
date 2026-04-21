@@ -8,9 +8,9 @@ import org.slf4j.Logger;
 @DeleteMethodsAndFields({"TBDeleted"})
 public abstract class ModTemplateMod {
 
-    @ShadowVersion
     @NotNull
-    public static final String MOD_ID;  
+    @ShadowVersion
+    public static final String MOD_ID;
 
     @ShadowVersion
     public static final Logger LOGGER;

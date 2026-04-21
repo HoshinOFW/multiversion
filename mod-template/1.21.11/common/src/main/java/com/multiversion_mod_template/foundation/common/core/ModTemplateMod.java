@@ -9,6 +9,7 @@ import org.slf4j.Logger;
 public abstract class ModTemplateMod {
 
 
+    @NotNull
     @ShadowVersion
     public static final String MOD_ID;
  
