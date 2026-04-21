@@ -21,8 +21,13 @@ public class ModTemplateMod {
 
     }
 
+    public static String boo() {
+        return "boo";
+    }
+
     public void TBDeleted() {
         
     }
+
 
 }

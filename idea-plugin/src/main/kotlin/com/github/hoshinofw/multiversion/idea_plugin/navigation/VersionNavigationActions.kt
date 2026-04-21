@@ -1,5 +1,6 @@
 package com.github.hoshinofw.multiversion.idea_plugin.navigation
 
+import com.github.hoshinofw.multiversion.engine.OriginNavigation
 import com.github.hoshinofw.multiversion.idea_plugin.navigation.util.*
 import com.github.hoshinofw.multiversion.idea_plugin.util.isMultiversionProject
 import com.intellij.openapi.actionSystem.AnAction
@@ -96,14 +97,15 @@ abstract class NavigateVersionAction(private val direction: Int) : AnAction(), D
 
         val context = resolveNavigationContext(psiFile, editor.caretModel.offset) ?: return
 
+        val filter = OriginNavigation.DECLARATION_FLAGS
         val target: PsiElement = when (context) {
             is PsiClass -> {
-                val hit = nearestTrueSrcClass(nav, direction) ?: return
+                val hit = nearestTrueSrcClass(nav, direction, filter) ?: return
                 openClassHit(project, nav, hit)
             }
             is PsiMember -> {
                 val key = memberKeyOf(context) ?: return
-                val hit = nearestTrueSrcMember(nav, key, direction) ?: return
+                val hit = nearestTrueSrcMember(nav, key, direction, filter) ?: return
                 openMemberHit(project, nav, hit)
             }
             else -> null
@@ -127,11 +129,12 @@ abstract class NavigateVersionAction(private val direction: Int) : AnAction(), D
     private fun gateByCaret(psiFile: PsiFile, file: VirtualFile, editor: Editor): Boolean {
         val nav = buildNavigationContext(file) ?: return false
         val ctx = resolveNavigationContext(psiFile, editor.caretModel.offset) ?: return false
+        val filter = OriginNavigation.DECLARATION_FLAGS
         return when (ctx) {
-            is PsiClass -> hasTrueSrcClass(nav, direction)
+            is PsiClass -> hasClass(nav, direction, filter)
             is PsiMember -> {
                 val key = memberKeyOf(ctx) ?: return false
-                hasTrueSrcMember(nav, key, direction)
+                hasMember(nav, key, direction, filter)
             }
             else -> false
         }

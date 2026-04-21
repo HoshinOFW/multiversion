@@ -3,6 +3,7 @@ package com.github.hoshinofw.multiversion.idea_plugin.engine
 import com.github.hoshinofw.multiversion.engine.*
 import com.github.hoshinofw.multiversion.idea_plugin.util.VersionContext
 import com.github.hoshinofw.multiversion.idea_plugin.util.getVersionedModuleRoot
+import com.github.hoshinofw.multiversion.idea_plugin.util.resolveVersionContext
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
 import java.io.File
@@ -23,10 +24,13 @@ object MergeEngineCache {
 
     private data class Entry(val config: EngineConfig, val lastModified: Long)
     private data class SynthEntry(val map: OriginMap, val trueSrcDirStamp: Long)
+    private data class RoutingEntry(val map: ClassRoutingMap, val stamp: Long)
 
     private val cache = ConcurrentHashMap<String, Entry>()
     private val originMapCache = CachedOriginMap()
     private val syntheticMapCache = ConcurrentHashMap<String, SynthEntry>()
+    private val routingCache = ConcurrentHashMap<String, RoutingEntry>()
+    private val syntheticRoutingCache = ConcurrentHashMap<String, RoutingEntry>()
 
     /**
      * Returns the [EngineConfig] for the versioned module that contains [file], or null if:
@@ -75,36 +79,77 @@ object MergeEngineCache {
     }
 
     /**
-     * Returns an [OriginResolver] wrapping the cached origin map for [moduleRoot] and the
-     * module's `baseRelRoot` from its [EngineConfig]. Returns null when either is missing.
+     * Returns the cached [OriginMap] for [mapFile], or null if the file does not exist.
+     * Callers with a direct file path (e.g. a base version's origin map during cascade)
+     * should use this to hit the shared cache instead of calling [OriginMap.fromFile].
+     */
+    fun originMapForFile(mapFile: File): OriginMap? = originMapCache.get(mapFile)
+
+    /**
+     * Returns an [OriginResolver] wrapping the cached origin map for [moduleRoot], the
+     * project's ordered version list, and a per-version routing lookup so the resolver
+     * can expand every `V:S:L:C` tuple stored in the compact origin-map format back to a
+     * real source path. Returns null when the origin map or the module's [VersionContext]
+     * are missing.
+     *
      * `OriginResolver` is a thin wrapper; callers should rebuild rather than cache it.
      */
     fun resolverForModuleRoot(moduleRoot: VirtualFile): OriginResolver? {
         val map = originMapForModuleRoot(moduleRoot) ?: return null
+        val ctx = resolveVersionContext(moduleRoot.path) ?: return null
+        val moduleName = moduleRoot.name
+        val versions = ctx.versionDirs.map { it.name }
+        val routingMaps = allRoutingMapsFor(ctx, moduleName)
         val baseRelRoot = forModuleRoot(moduleRoot)?.baseRelRoot ?: ""
-        return OriginResolver(map, baseRelRoot)
+        return OriginResolver(
+            originMap = map,
+            versions = versions,
+            moduleName = moduleName,
+            routingFor = { idx -> routingMaps.getOrNull(idx) },
+            baseRelRootFallback = baseRelRoot,
+        )
     }
+
+    private val log = com.intellij.openapi.diagnostic.Logger.getInstance(MergeEngineCache::class.java)
 
     /**
      * Synthesizes an [OriginMap] for a module whose trueSrc directory exists but whose
-     * patchedSrc origin map has not been generated. Used as a fallback for the base
-     * version (never patched) and for unbuilt versions.
+     * patchedSrc origin map has not been generated. This is the fallback for unbuilt
+     * versions; once `generateAllPatchedSrc` has run, every version (including the base)
+     * has a real map file on disk and this path is not used.
      *
      * Cached per module root; invalidated when the trueSrc directory's `lastModified`
-     * changes. Returns null if the trueSrc directory does not exist.
+     * changes. Returns null if the trueSrc directory does not exist. Per-file synthesis
+     * failures are tolerated (file may be mid-edit) and logged at WARN.
      */
-    private fun syntheticOriginMapForModuleRoot(vDir: File, moduleName: String): OriginMap? {
-        val trueSrcDir = File(vDir, "$moduleName/${PathUtil.TRUE_SRC_MARKER}")
+    private fun syntheticOriginMapForModuleRoot(moduleRoot: VirtualFile): OriginMap? {
+        val trueSrcDir = File(moduleRoot.path, PathUtil.TRUE_SRC_MARKER)
         if (!trueSrcDir.isDirectory) return null
         val key = trueSrcDir.canonicalPath
         val stamp = trueSrcDir.lastModified()
         syntheticMapCache[key]?.let { if (it.trueSrcDirStamp == stamp) return it.map }
 
-        val versionRelRoot = "${vDir.name}/$moduleName/${PathUtil.TRUE_SRC_MARKER}"
-        val map = MergeEngine.synthesizeFromTrueSrc(trueSrcDir, versionRelRoot)
-        syntheticMapCache[key] = SynthEntry(map, stamp)
-        return map
+        val ctx = resolveVersionContext(moduleRoot.path) ?: return null
+        val synth = MergeEngine.synthesizeFromTrueSrc(trueSrcDir, ctx.currentIdx, tolerateParseErrors = true)
+        if (synth.failures.isNotEmpty()) {
+            log.warn(
+                "Origin map synthesis for ${ctx.currentVersion}/${moduleRoot.name} skipped " +
+                    "${synth.failures.size} unparseable file(s): " +
+                    synth.failures.joinToString(", ") { "${it.rel} (${it.cause.javaClass.simpleName})" }
+            )
+        }
+        syntheticMapCache[key] = SynthEntry(synth.map, stamp)
+        return synth.map
     }
+
+    /**
+     * Returns [moduleRoot]'s origin map, preferring the generated `_originMap.tsv` and
+     * falling back to a synthesized map derived from the module's trueSrc. Returns null
+     * only if neither is available. Cheaper than [allOriginMapsFor] when only one
+     * version's map is needed.
+     */
+    fun originMapForModuleRootWithFallback(moduleRoot: VirtualFile): OriginMap? =
+        originMapForModuleRoot(moduleRoot) ?: syntheticOriginMapForModuleRoot(moduleRoot)
 
     /**
      * Assembles the ordered list of origin maps for every version directory in [ctx].
@@ -120,8 +165,68 @@ object MergeEngineCache {
         val lfs = LocalFileSystem.getInstance()
         return ctx.versionDirs.map { vDir ->
             val moduleRoot = lfs.findFileByIoFile(File(vDir, moduleName)) ?: return@map null
-            originMapForModuleRoot(moduleRoot) ?: syntheticOriginMapForModuleRoot(vDir, moduleName)
+            originMapForModuleRootWithFallback(moduleRoot)
         }
+    }
+
+    // --- @ModifyClass routing -------------------------------------------------
+
+    /**
+     * Returns the [ClassRoutingMap] for [moduleRoot]. Sidecars written alongside
+     * `_originMap.tsv` are the primary source; when no origin map exists (base version,
+     * unbuilt) the cache falls back to engine-synthesized routing via
+     * [MergeEngine.synthesizeRoutingFromTrueSrc].
+     *
+     * Built-routing cache invalidates on `_originMap.tsv` mtime (coarse proxy — sidecars
+     * are written atomically with the origin map in the same Gradle task). The call site
+     * is isolated so switching to per-sidecar mtime later is a local change.
+     *
+     * Returns an empty [ClassRoutingMap] if neither sidecars nor trueSrc are available.
+     * Never returns null so consumers don't need null-handling at lookup time.
+     */
+    fun routingForModuleRoot(moduleRoot: VirtualFile): ClassRoutingMap {
+        val originMapFile = File(moduleRoot.path, "${PathUtil.PATCHED_SRC_DIR}/${PathUtil.ORIGIN_MAP_FILENAME}")
+        if (originMapFile.exists()) {
+            val key = originMapFile.canonicalPath
+            val stamp = originMapFile.lastModified()
+            routingCache[key]?.let { if (it.stamp == stamp) return it.map }
+
+            val patchedJavaDir = File(moduleRoot.path, "${PathUtil.PATCHED_SRC_DIR}/${PathUtil.JAVA_SRC_SUBDIR}")
+            val map = ClassRoutingMap.fromPatchedSrcDir(patchedJavaDir)
+            routingCache[key] = RoutingEntry(map, stamp)
+            return map
+        }
+        return syntheticRoutingForModuleRoot(moduleRoot)
+    }
+
+    private fun syntheticRoutingForModuleRoot(moduleRoot: VirtualFile): ClassRoutingMap {
+        val trueSrcDir = File(moduleRoot.path, PathUtil.TRUE_SRC_MARKER)
+        if (!trueSrcDir.isDirectory) return ClassRoutingMap()
+        val key = trueSrcDir.canonicalPath
+        val stamp = trueSrcDir.lastModified()
+        syntheticRoutingCache[key]?.let { if (it.stamp == stamp) return it.map }
+
+        val map = MergeEngine.synthesizeRoutingFromTrueSrc(trueSrcDir)
+        syntheticRoutingCache[key] = RoutingEntry(map, stamp)
+        return map
+    }
+
+    /**
+     * Per-version routing maps aligned with [ctx.versionDirs]. Versions with no module
+     * directory yield an empty [ClassRoutingMap]; the list is never null.
+     */
+    fun allRoutingMapsFor(ctx: VersionContext, moduleName: String): List<ClassRoutingMap> {
+        val lfs = LocalFileSystem.getInstance()
+        return ctx.versionDirs.map { vDir ->
+            val moduleRoot = lfs.findFileByIoFile(File(vDir, moduleName)) ?: return@map ClassRoutingMap()
+            routingForModuleRoot(moduleRoot)
+        }
+    }
+
+    /** Convenience: routing for the versioned module that contains [file]. */
+    fun routingForFile(file: VirtualFile): ClassRoutingMap {
+        val moduleRoot = getVersionedModuleRoot(file) ?: return ClassRoutingMap()
+        return routingForModuleRoot(moduleRoot)
     }
 
     /** Drops the cached entry for [moduleRoot] so the next read re-parses the file. */
@@ -132,5 +237,7 @@ object MergeEngineCache {
         originMapCache.invalidate(mapFile)
         val trueSrcDir = File(moduleRoot.path, PathUtil.TRUE_SRC_MARKER)
         syntheticMapCache.remove(trueSrcDir.canonicalPath)
+        routingCache.remove(mapFile.canonicalPath)
+        syntheticRoutingCache.remove(trueSrcDir.canonicalPath)
     }
 }

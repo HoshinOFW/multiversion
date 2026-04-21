@@ -1,117 +1,256 @@
 ## @ModifyClass Implementation
 
+### Status
+
+**Done**
+1. `@ModifyClass` annotation (annotations module).
+2. `ClassRoutingMap` in merge-engine with per-target line-oriented sidecar read/write and stale-sidecar pruning.
+3. `ModifyClassPreMerge` in merge-engine: parses trueSrc for `@ModifyClass`, resolves FQN via imports/package + shrinking-prefix file-IO check against v-1 patchedSrc + current trueSrc, validates all contracts (orphan, inner-class placement, inner-class target, one-overwrite, class-level annotation sync, import simple-name collisions), produces virtual target CUs with pre-print member-source positions recorded.
+4. `True2PatchMergeEngine.processVersion` integrates pre-merge: skips modifier rels in the trueSrc walk, merges each virtual target via `mergeVirtualTarget` that post-processes TRUESRC origin entries to rewrite path + position to the real sibling source, deletes orphan modifier copies, writes + prunes routing sidecars, skips virtual target rels in the inherited-origins phase.
+5. Gradle `main.java.exclude("**/*.routing")` so sidecars never enter compile or sourcesJar.
+6. Shared `JavaParserHelpers` (engine-internal): parser instance, position helpers, descriptor wrappers, type-aware accessors. Used by both `True2PatchMergeEngine` and `ModifyClassPreMerge`.
+7. `ModifyClassPreMerge.synthesizeRoutingFromTrueSrc(trueSrcDir)` + `MergeEngine.synthesizeRoutingFromTrueSrc` public wrapper. Permissive, engine-owned, no PSI.
+8. `MergeEngineCache` extended with `ClassRoutingMap` loading (sidecar primary, synthesized fallback for unbuilt versions), invalidation on `_originMap.tsv` mtime, query helpers in both directions.
+9. `AnnotationFqns.kt` gains `MODIFY_CLASS_FQN`.
+10. IDE navigation: `NavigationContext` carries per-version routing + caret-rel-translated-to-target-rel. `openMemberHit` / `openClassHit` use origin-map values to land on the real sibling file. `ShowAllVersionsPopupAction` fans out one row per sibling in multi-modifier versions.
+11. IDE refresh listeners: `PatchedSrcUpdater.updatePatchedSrcWithCascade` is a per-module dispatch. Each module's routing view decides between the existing single-file fast path (`MergeEngine.mergeFileContentToFile`) and the new file-level sibling-group entry (`MergeEngine.siblingGroupUpdatePatchedSrc`). Downstream propagates at the resolved target rel (not the edited rel) for cross-name modifier support. Gradle's full-version `MergeEngine.versionUpdatePatchedSrc` is untouched and never called from the IDE listeners.
+12. IDE refactor plumbing: `MoveListener` delegates sidecar maintenance to `ClassRoutingMap.Sidecars.renameTarget` / `renameModifier`. IDE never opens or writes `.routing` files directly — same pattern as how it accesses the origin map through `OriginMap`, not raw TSV I/O.
+13. IDE inspections: `MissingExplicitModifyClassInspection` (yellow + quick fix), `OrphanModifyClassTargetInspection` (red, covers missing target + inner-class target), `InnerClassModifyClassInspection` (red).
+
+**Remaining**
+14. mod-template test examples: single modifier, multiple siblings, cross-package, expected-to-fail orphan / conflict / inner-class cases committed as permanent regression examples.
+
 ### What it is
 
-`@ModifyClass` marks a class that modifies another class from a previous version. Currently, class matching across versions is always by file name (Foo.java in v1 matches Foo.java in v2). @ModifyClass breaks this in two ways:
+`@ModifyClass` marks a class that modifies another class from a previous version. Currently, class matching across versions is always by file name (Foo.java in v1 matches Foo.java in v2). `@ModifyClass` changes this in two ways:
 
-1. **Different name targeting**: `@ModifyClass` can optionally take a string parameter specifying a different target class name. So `FooPatched.java` with `@ModifyClass("Foo")` targets and modifies `Foo.java` from the previous version. Without the parameter, the target is implicit via the class's own name (same as current behavior).
+1. **Cross-name and cross-package targeting**: `@ModifyClass(Foo.class)` on `FooNetworkPatch.java` targets the upstream class `Foo`, regardless of the modifier's filename or package. The target is a `Class<?>` literal, not a string. This gives native IntelliJ goto-declaration, find-usages, and rename-refactor support on the target reference, plus compile-time enforcement that the target actually exists. `@ModifyClass` with no argument is shorthand for `@ModifyClass(ThisClass.class)`, preserved as the backwards-compatible implicit form.
 
-2. **Multiple modifiers per target**: Multiple @ModifyClass classes in one trueSrc version can target the same base class. For example, `FooNetworkPatch.java` and `FooBehaviorPatch.java` could both target `Foo.java`. They would be applied in sequence (deterministic order, e.g. alphabetical).
+2. **Multiple modifiers per target**: Multiple files in one trueSrc version can target the same upstream class (for example `FooNetworkPatch.java` and `FooBehaviorPatch.java` both carrying `@ModifyClass(Foo.class)`). These are called **sibling modifiers**. They are virtually merged into one target class in memory before the existing forward merge runs.
 
-### Central solution: class routing map
+Hard errors:
+- `@ModifyClass` placed on an inner class. Inner-class support is deferred; for now the engine rejects it.
+- `@ModifyClass(Foo.class)` with no upstream `Foo` in any earlier version. Creating new classes uses a plain declaration with no annotation.
 
-The merge engine already writes `multiversion-engine-config.json` per patched module. A new companion file, `multiversion-class-routing.json`, should be written alongside it during `generatePatchedJava`. It maps target class rel paths to the trueSrc files that modify them.
+### One-overwrite-per-version rule
 
-Format:
-```json
-{
-  "com/example/Foo.java": [
-    "com/example/FooNetworkPatch.java",
-    "com/example/FooBehaviorPatch.java"
-  ],
-  "com/example/Bar.java": [
-    "com/example/BarPatch.java"
-  ]
-}
+Within a single trueSrc version, across all sibling modifiers of a target, each member signature has at most one **defining** file. Defining means the member carries `@OverwriteVersion`, `@ModifySignature`, or is a brand-new addition. `@ShadowVersion` references are pure pointers and may be duplicated freely across siblings.
+
+This keeps every member's version lifeline one-dimensional: walking up or down through versions always lands on exactly one modifier file per version at the member level. Class-level navigation can still surface multiple modifier files per version through the show-all-versions popup.
+
+The merge engine fails the build hard on any violation, listing all offending files. The IDE surfaces live violations as red-error inspections (see Todo after).
+
+### Class-level annotation synchronization
+
+All siblings targeting the same class in one trueSrc version must agree on the multiversion class-level statements that actually reach the merged output:
+- **Presence** of `@OverwriteTypeDeclaration`, `@DeleteMethodsAndFields`, and `@DeleteClass` — either every sibling has a given annotation or none do.
+- `@DeleteMethodsAndFields` descriptors must match as a set when present on all.
+- **Class declaration** (extends, implements, type parameters, modifiers) only when `@OverwriteTypeDeclaration` is present on all siblings. Without `@OverwriteTypeDeclaration` the forward merge preserves the base version's declaration unconditionally, so extension-sibling declarations are cosmetic (`public class FooExt` is fine targeting `public abstract class Foo`) and not checked.
+
+Any mismatch is a hard engine error and a red IDE inspection (see Todo after).
+
+### Central solution: per-target routing sidecars
+
+For every target class whose modifiers are not all same-named, the gradle plugin writes a sidecar next to the merged output class in patchedSrc. Plain text, one modifier rel path per line, alphabetical:
+
+```
+# patchedSrc/.../com/example/Foo.java.routing
+com/example/FooBehaviorPatch.java
+com/example/FooNetworkPatch.java
 ```
 
-Only entries where the source file differs from the target are included (same-name classes use implicit routing as before). This file is produced by the merge engine (or Gradle plugin) during patchedSrc generation by scanning all trueSrc files for @ModifyClass annotations, and is consumed by the IDE plugin for navigation, refactoring, etc.
+Chosen over a single large JSON/TSV so that editing one modifier only invalidates its one sidecar, and parsing is a trivial line-read. Targets whose single modifier is same-named rely on implicit routing (no sidecar).
 
-The merge engine should expose a `ClassRoutingMap` data class in the engine module (next to `EngineConfig`) with `fromJson`/`toJson`/`fromFile`/`toFile` methods. The IDE plugin caches it in `EngineConfigCache` alongside the engine config, invalidating on file modification timestamp.
+The patchedSrc sourceSet excludes `**/*.routing` so the files never enter the compile classpath or the jar.
+
+**At IDE runtime:** sidecar files are the single source of truth, produced by the merge engine. The IDE cache loads them lazily and invalidates when `_originMap.tsv` mtime changes (same task rewrites both, so this is a correct coarse proxy; the cache is shaped so it can move to per-sidecar mtime later without disturbing call sites). For versions with trueSrc but no sidecars (base version, unbuilt versions), the cache falls back to engine-synthesized routing via `ModifyClassPreMerge.synthesizeRoutingFromTrueSrc` — mirrors the existing `MergeEngine.synthesizeFromTrueSrc` pattern for origin maps. No IDE-side PSI scanning for `@ModifyClass`; the edit-vs-rebuild lag window is handled by the same listeners that keep patchedSrc fresh.
+
+**Extensibility for inner classes:** inner classes will eventually get their own sidecar entries (e.g. `Foo$Inner.java.routing`) living alongside the outer class's sidecar. Current format needs no change to accommodate this later.
+
+### Virtual pre-merge in the engine
+
+The pre-merge lives in the merge-engine module (alongside the forward merge; engine owns all merge and OriginMap logic per `Engine vs IDE split`). It is **virtual**: no temp files, no disk roundtrip. The engine's merge entry points gain in-memory overloads so pre-merged CompilationUnits feed directly into the existing pipeline:
+
+- Scan each version's trueSrc CompilationUnits for `@ModifyClass`, resolving each class literal to an FQN via the modifier file's imports (or same-package default).
+- Group siblings by target FQN. Validate: no orphan target, no inner-class placement, one-overwrite rule across members, full class-level annotation synchronization. All validation failures are hard errors with all offending paths.
+- Produce a virtual target `CompilationUnit` per target: union siblings' imports (simple-name collisions across different packages are a hard error), combine members (conflict-free by construction thanks to the one-overwrite rule), adopt the agreed class declaration and class-level annotations.
+- Hand each virtual CU to the forward merge at its target rel path. OriginMap entries for pre-merged members point at the **real** source file (e.g. `FooNetworkPatch.java`), not the virtual target. This preserves goto-declaration and find-usages accuracy.
+- Processing order across siblings is alphabetical by source filename. Order is cosmetic only (affects member layout in the merged class) because the one-overwrite rule forbids conflicts.
 
 ### Breaking points and fixes
 
-Each point is annotated with severity: MAJOR (significant rework), MODERATE (targeted changes), MINOR (trivial).
+Severity: MAJOR (significant rework), MODERATE (targeted changes), MINOR (trivial).
+
+Most of what originally looked MAJOR in the engine collapses to MODERATE thanks to the virtual pre-merge: the existing merge pipeline still sees a single CompilationUnit at the target rel path, so `mergeContent` / `collectInheritedOrigins` don't need `sourceRel` vs `targetRel` splits.
+
+#### Annotations module
+
+**`@ModifyClass`** -- NEW
+- `@Target(TYPE)`, `@Retention(SOURCE)`.
+- Single optional `Class<?> value()`, defaulting to a self-sentinel (meaning "implicit same-name target").
+- No string form.
+- Engine rejects placement on inner classes.
 
 #### Merge engine
 
-**True2PatchMergeEngine.processVersion()** -- MAJOR
-Currently walks trueSrc files and assumes `rel` path matches the base and output. Must:
-- Pre-scan all trueSrc files for @ModifyClass annotations to build routing (target rel -> list of modifier files).
-- For each entry in the routing, merge modifiers in order onto the base at the target's rel path.
-- Write output to the target's rel path, not the modifier's.
-- Emit the class routing map for downstream consumers.
+**Pre-merge subsystem** -- NEW (see section above)
+- Parses and groups siblings, validates all contracts, produces virtual target CUs.
+- Also exposes `synthesizeRoutingFromTrueSrc(trueSrcDir)` for the IDE cache's fallback path on versions without a generated sidecar set (base version, unbuilt versions). Permissive: no existence / inner-class / one-overwrite checks — purely a routing read for navigation. Mirrors `MergeEngine.synthesizeFromTrueSrc`.
 
-**True2PatchMergeEngine.mergeContent()** -- MAJOR
-Uses `rel` as the origin map key. When merging FooPatched.java -> Foo.java, origin entries must be keyed under `com/Foo.java`, not `com/FooPatched.java`. The `rel` parameter must become the *target* rel, and a separate `sourceRel` must track where the modifier actually lives.
+**`ClassRoutingMap`** -- NEW
+- Data class beside `EngineConfig` with forward (`getModifiers`) + backward (`getTarget`) in-memory indexes, bulk load/write (`fromPatchedSrcDir`, `writeSidecars`, `pruneStaleSidecars`), and a nested `Sidecars` object for per-target I/O used by `siblingGroupUpdatePatchedSrc` and IDE refactor plumbing (`writeOne`, `renameTarget`, `renameModifier`).
 
-**True2PatchMergeEngine.mergeFile()** -- MAJOR
-Signature assumes currentFile/baseFile/outFile share the same rel path. Must accept an explicit target rel for routing.
+**`True2PatchMergeEngine.processVersion()`** -- MODERATE
+- Run pre-merge first to build the virtual target map for this version.
+- Iterate targets (not modifier files directly). For targets with modifiers, hand the virtual CU to the merge; for plain trueSrc files without `@ModifyClass`, behavior is unchanged.
+- Emit per-target routing sidecars alongside output.
 
-**True2PatchMergeEngine.collectInheritedOrigins()** -- MODERATE
-Checks `File(currentSrcDir, rel).exists()` to detect inherited files. With @ModifyClass, a file might be modified by a differently-named trueSrc file. Must check the routing map instead of raw file existence.
+**`True2PatchMergeEngine.mergeFile()` / `mergeContent()`** -- MODERATE
+- Accept an in-memory virtual `CompilationUnit` in addition to the File-based path.
+- `rel` semantics remain "target rel path"; correct for both direct trueSrc files and virtual pre-merged CUs.
+
+**`True2PatchMergeEngine.collectInheritedOrigins()`** -- MODERATE
+- Today checks raw `File(currentSrcDir, rel).exists()` to detect inherited files. With `@ModifyClass`, a target may be modified by differently-named files. Consult the pre-merge routing instead of raw file existence.
 
 #### Gradle plugin
 
-**MultiversionPatchedSourceGeneration.patchModuleGroup()** -- MAJOR
-Override detection logic: "if version k has file X, exclude X from earlier layers." FooPatched.java in v2 must exclude Foo.java from v1, but names don't match. Must:
-- Parse @ModifyClass annotations during file collection to build the routing.
-- Use routing to correctly identify which base files are overridden.
-- Write output files at the target's rel path.
-- Write `multiversion-class-routing.json` alongside the engine config.
+**`MultiversionPatchedSourceGeneration.patchModuleGroup()`** -- MODERATE
+- Detect `@ModifyClass` modifier files during file collection.
+- Exclude modifier files from direct emission to patchedSrc; they're consumed by the pre-merge only.
+- Hand the merge engine the full set of modifier files per version so pre-merge has everything.
+- Override detection ("if version k has target T, exclude T from earlier layers") uses the routing-derived target FQN, not modifier filenames.
+- Write per-target `.routing` sidecars next to merged outputs.
+- Ensure the patchedSrc sourceSet excludes `**/*.routing`.
 
 #### IDE plugin -- navigation
 
-**VersionMemberUtil.findAdjacentVersionClass()** -- MAJOR
-Looks for the same `relClassPath` in the target version's trueSrc/patchedSrc. Won't find `FooPatched.java` when navigating from `Foo.java`. Must:
-- Load the class routing map for the target version.
-- Check if any modifier targets the current class.
-- For upstream navigation (going to base), this already works (patchedSrc has the correct merged file at the target rel path).
-- For downstream navigation, must consult the routing map to find the modifier file(s).
+**`MergeEngineCache`** -- MODERATE
+- Extend to load and cache `ClassRoutingMap` per module root, invalidating on `_originMap.tsv` mtime (coarse; sidecars are written atomically with the origin map in the same task).
+- For module roots without a generated origin map (base version, unbuilt), fall back to `ModifyClassPreMerge.synthesizeRoutingFromTrueSrc`. Cached separately and keyed on trueSrc dir mtime, same shape as `syntheticOriginMapForModuleRoot`.
+- Expose helpers: "what modifier files target class X in version v" and "what class does this modifier target".
+- Structure the call sites so switching from coarse (origin-map-mtime) to fine (per-sidecar-mtime) invalidation later is a local change inside the cache.
 
-**VersionMemberUtil.findAllVersionClasses()** -- MAJOR
-Same assumption: iterates versions checking the same rel path. Must use the routing map per version.
+**`VersionMemberUtil.findAdjacentVersionClass()`** -- MODERATE
+- Upstream: unchanged (patchedSrc already holds the merged file at the target rel path).
+- Downstream: consult routing to find modifier file(s) for the target class in the next version.
 
-**VersionModuleUtil.findCorrespondingFile()** -- MAJOR
-Maps files across versions by identical rel path. Must check routing map for cross-name matches.
+**`VersionMemberUtil.findAllVersionClasses()`** -- MODERATE
+- Per version, look up routing for modifier files. For versions without modifiers for that target, fall back to same-rel-path lookup.
 
-**ShowAllVersionsPopupAction** -- MODERATE
-Currently shows one entry per version. With multiple @ModifyClass files targeting the same class in one version, must show multiple entries for that version (one per modifier file). The popup model already supports this.
+**`VersionModuleUtil.findCorrespondingFile()`** -- MODERATE
+- Use routing for cross-name matching.
+
+**`ShowAllVersionsPopupAction`** -- MODERATE
+- Show one entry per modifier file per version when siblings exist. Popup model already supports this.
+
+**Member-level navigation** -- NOT BROKEN
+- OriginMap already points at the defining modifier per member. The one-overwrite rule guarantees no ambiguity at member level, so no popup or fallback is needed there.
 
 #### IDE plugin -- refactoring
 
-**MultiversionRenameProcessor.addMatchingElements()** -- MODERATE
-Matches classes by `it.name == element.name`. Renaming `Foo` won't touch `FooPatched`. Must detect @ModifyClass target and decide: rename the base class everywhere, or update the @ModifyClass annotation parameter.
+**Rename of the target class** -- NOT BROKEN (thanks to class-literal value)
+- `@ModifyClass(Foo.class)` is a real class reference; IntelliJ's native rename propagation updates it automatically across all modifier files. No plugin work.
 
-**MultiversionMoveListener move propagation** -- MODERATE
-Moves the same rel path in all versions. Won't find @ModifyClass files at different paths. Must consult routing map to find all related files.
+**`MultiversionMoveListener` move propagation** -- MODERATE
+- Today moves the same rel path in all versions. For modifiers at different paths, consult routing to find all related files.
 
-**MultiversionMoveListener.updateTsvForRename()** -- MODERATE
-Patches origin map TSV by rel path. @ModifyClass file's origin entries are keyed by the target path, not the source. Must look up routing before patching.
+**`MultiversionMoveListener.updateTsvForRename()`** -- MODERATE
+- OriginMap TSV entries for modifier members are keyed by target rel path. Look up routing before patching.
+
+**Refresh listeners for modifier edits** -- MODERATE
+- `OnSaveListener` and `PsiStructureListener` currently trigger `MergeEngine.mergeFileContentToFile` / `fileUpdatePatchedSrc` at the edited file's rel path. That is wrong when the edited file is a modifier: editing `FooPatch.java` must regenerate the merged **target** `Foo.java` (running pre-merge for the whole sibling group), not a standalone merge at `FooPatch.java`'s rel path.
+- Every IDE-initiated merge operation (on-save, structural change, move cascade, rename cascade, delete cascade) consults the routing cache: if the edited/moved/deleted file is a modifier, operate on the target rel (and the whole sibling group) instead.
+- Edits to `@ModifyClass` itself, class-level annotations, and member bodies are all covered by this single redirect.
+
+#### IDE plugin -- inspections
+
+Each engine hard error has a matching live IDE inspection so violations surface at edit time instead of at build time.
+
+**Missing explicit `@ModifyClass` warning** -- NEW
+- Yellow warning on a file that participates in a multi-file modification set but lacks an explicit `@ModifyClass` annotation (typical case: `Foo.java` with no annotation while `FooPatch.java` has `@ModifyClass(Foo.class)` in the same version).
+- Quick fix: add `@ModifyClass` (or `@ModifyClass(Foo.class)` if the class name differs from the target).
+
+**Orphan target error** -- NEW
+- Red error on `@ModifyClass(Foo.class)` when `Foo` is not present in any earlier version's patchedSrc. Existence in the current version's patchedSrc (the one being produced from this trueSrc) does not count; the target must already exist upstream.
+- Paired with the engine hard error of the same name.
+
+**Inner-class placement error** -- NEW
+- Red error on `@ModifyClass` when the annotation sits on a non-top-level class declaration. Inner-class support is deferred.
+- Paired with the engine hard error of the same name.
 
 #### Not broken (works as-is)
 
-- **findMatchingMember()** -- matches within a class by name+params, agnostic to how the class was found.
-- **OriginMap / PatchedSrcGotoDeclarationHandler** -- keyed by output path, works if the merge engine writes correct entries.
+- **`findMatchingMember()`** -- matches within a class by name + params, agnostic to how the class was found.
+- **OriginMap / PatchedSrcGotoDeclarationHandler** -- keyed by output path; works since origin entries point at the real modifier source.
 - **PatchedSrcFindUsagesHandler** -- scans full patchedSrc directories, path-agnostic.
-- **isOverriddenDownstream()** -- delegates to findAllVersionsOfMember, which delegates to findAllVersionClasses. Fixing findAllVersionClasses fixes this transitively.
-- **DescriptorAnnotationSupport** -- resolves descriptors within a class, path-agnostic.
+- **`isOverriddenDownstream()`** -- transitively fixed via `findAllVersionClasses`.
+- **`DescriptorAnnotationSupport`** -- resolves descriptors within a class, path-agnostic.
+- **Target-class rename refactor** -- handled by IntelliJ's native rename on the class-literal reference inside `@ModifyClass(Foo.class)`.
 
 ### Implementation order
 
-1. **Annotation**: add `@ModifyClass` to annotations module (target = TYPE, retention = SOURCE, optional String value parameter for target name).
-2. **Engine data class**: add `ClassRoutingMap` to merge-engine module with JSON serialization.
-3. **Engine merge**: update `processVersion` / `mergeFile` / `mergeContent` to handle routing. This is the hardest part.
-4. **Gradle plugin**: update patchModuleGroup to build routing, write the JSON file.
-5. **IDE plugin**: load routing map in `EngineConfigCache`, update `findAdjacentVersionClass` / `findAllVersionClasses` / `findCorrespondingFile` to consult it.
-6. **IDE refactoring**: update rename processor and move listener.
-7. **Test**: add @ModifyClass examples to mod-template.
+Items 1-13 are done (see Status). Remaining:
+
+14. **mod-template test examples**: single modifier, multiple siblings, cross-package, expected-to-fail orphan / conflict / inner-class cases committed as permanent regression examples.
+
+### Todo after
+
+IDE integration for the other class-level annotations (`@OverwriteTypeDeclaration`, `@DeleteMethodsAndFields`) once the core `@ModifyClass` system is in place.
+
+**Red-error inspection: sibling class-level annotation mismatch**
+- Fires when siblings targeting the same class in the same trueSrc version disagree on:
+  - The class declaration (extends, implements, type parameters, modifiers).
+  - `@OverwriteTypeDeclaration` presence or content.
+  - `@DeleteMethodsAndFields` presence or descriptors.
+- Scoped to same-version siblings only. Cross-version disagreement is expected and handled elsewhere.
+
+**Quick fixes on the mismatch inspection**, in priority order:
+1. **Make others match** (primary, shown first) -- take this file's class-level annotation state and propagate it to every sibling in the same version.
+2. **Match to others** -- adopt the sibling consensus into this file.
+
+Both quick fixes operate across all sibling files in the same trueSrc version only.
+
+**Refresh listener integration:** the main plan already wires modifier edits through routing to refresh patchedSrc, so class-level annotation edits are covered without extra work as long as the listener treats any trueSrc text edit as a potential target refresh.
 
 ---
 
 
+### Known limitations (user-visible; documented in README):
+
+- **`@ModifyClass` add / remove needs a full refresh**: the IDE's per-save incremental updater reads its `@ModifyClass` routing from the cache built by the last full build (`generatePatchedJava`). Adding or removing `@ModifyClass` on a file in the IDE changes the routing, but the cache doesn't reflect that until the next full build, so the first save cycle after the annotation change produces stale patchedSrc for the affected group. **Workaround**: run `generatePatchedJava` (or `generateAllPatchedSrc`) whenever a `@ModifyClass` addition or removal creates or dissolves a sibling group. Edits *within* an established group (method bodies, `@OverwriteVersion` / `@ShadowVersion` flips, signature changes) don't need this — incremental updates handle them.
+
 ### Observed Bugs:
 
+- Navigation between members without a body is not working.
+  - At the moment it just defaults me to the class declaration of the current version.
+  - On fields it takes to itself, and on methods it takes me to the class declaration. Both in the same version.
+  - What is weird is that the visuals are working, the arrows appear when they should.            
+  - So, a fix and a change in the feature itself:
+    - The change: The arrows and keybinds show and act on @OverwriteVersion and @ModifySignature only.        
+    - The arrow only appears if one of those two is present upstream/downstream respectively, and both the arrow and keybind both only navigate between base, MODSIG, and OVERWRITE.
+    - The fix: The Alt Shift V popup SHOULD STILL SHOW ALL VERSIONS, and needs to let you navigate to @ModifySignature instead of only @OverwriteVersion.
+      - My best guess to why navigation only works to @OverwriteVersion is because the others do not have an encoded position in originMap at all.
+      - They have the flags, but they point back to member body.
+      - The fix: add more info to originMap and start using more compact representations.
+      - At the moment, originMap holds a whole string even though it doesn't have to at all.
+      - OriginMap should now look like this: 
+        - KEY  version:sibling_index:line:col  sibling_index:line:col  FLAGS
+        - The version:sibling_index:line:col is a compact representation of the current originMap target.
+          - It points to the body's declaration, AKA the most recent @OverwriteVersion in the upstream.
+          - version is obvious
+          - sibling_index is the index of MutableList<String> forward map in ClassRoutingMap, accessible via MergeEngineCache.
+          - line:col are what you expect, they point to the exact declaration.
+        - the sibling_index:line:col is an optional entry that appears if there is either @ModifySignature or @OverwriteVersion on the member, or if the member is new to the version.
+          - In a given trueSrc, there can only be 1 place where a member is either @ModifySignature or @OverwriteVersion or both or new. So this field can be always present alongside those.
+          - This entry is what allows the IDE to find @ModifySignature members when the previous originMap never provided their location.
+          - the syntax is the same as the previous entry, just without the version, because we know it is THIS version.
+          - This field, along with the flags, is not inherited by downstream originMap.
+        - FLAGS are the already existing flags.
+      - This new system allows the IDE to retain existing behavior while also giving it enough information to find @ModifySignature members.
+      - It is extremely important that all of this happens on the merge engine (read and write), and that the merge engine exposes the appropriate abstract query for the IDE.
+
+- int bro in ModTemplateMod 1.21.1 should have an IDE error because it is a new member present in both ModTemplateMod and ModTemplateModExtension.
+- **JavaParser `AssertionError` crashes routing synthesis when a trueSrc file is mid-edit.** `ModifyClassPreMerge.parseAll` uses `parser.parse(content).result.orElse(null)` to guard against parse failures, but JavaParser's generated grammar throws `AssertionError` (via `TokenRange`) on some malformed inputs, and `AssertionError` bypasses `orElse`. The crash propagates up through `synthesizeRoutingFromTrueSrc` into whichever caller triggered routing (observed: `MissingExplicitModifyClassInspection` during daemon inspection). Fix scope: the IDE synthesis path should tolerate unparseable files (skip + continue); the Gradle build path (`processVersion`) should still fail loudly. Simplest shape is a `tolerateParseErrors` flag on `parseAll`, wrapping the parse call in `try { ... } catch (_: Throwable)` when true.
 - I got a related error from exploring 1.21.11/.../ModTemplateMod while exploring FabricModTemplateMod, which references init, an old version of init2.
   - Is this because all references of a method are loaded in memory and analyzed?
   - This could tank performance badly, the only files on memory should be all versions of the classes you have open in your editor. 
@@ -119,11 +258,12 @@ Patches origin map TSV by rel path. @ModifyClass file's origin entries are keyed
     - Any reference search should not have found it
     - How did the file ever get analyzed
 - Deleting classes is not always updating patchedSrc.
-- Going upstream from 1.21.11 ModTemplateMod class is leading me to 1.21.1 patchedSrc
-  - Seems fixed, keep testing.
+- Neoforge truSrc 1.21.1 module has trueSrc common available as a sourceSet. It should not, every module should only see patchedSrc of the other modules
+  - In this case the symptom was "Attribute value must be constant" for a final but not initialized @ShadowVersion in common trueSrc, while in patchedSrc the final field is obviously initialized, neoforge trueSrc saw the common trueSrc, not the patchedSrc as it should.
 
 
 ### Test:
+- Everything IDE and merge after additions and refactors.
 - Navigation in mod template to see if bugs got fixed
 - Test refactoring support for all classes.
 - Test class types such as record, interface, etc. Make sure they work properly
@@ -171,6 +311,23 @@ Patches origin map TSV by rel path. @ModifyClass file's origin entries are keyed
   - A dialogue should open up with a warning and an option to refactor.
   - Clicking refactor should open the same menu as clicking Safe Delete usually does. It lists the references across files (across versions in this codebase) and lets you edit them.
   - Maybe there could also be some other button to attempt the refactor automatically. It would change all references to the old method in downstream methods to the new method signature. 
+
+### IDE tech debt: migrate to centralized upstream-member walker
+
+Everything in the plugin that looks up "the same member / class in some other version" should go through the engine's `OriginNavigation` walkers + the IDE's `MemberLookup` helper. The walker is extension / sibling-aware (routing), rename-chain aware, and takes a `Set<OriginFlag>` filter so callers can ask for the exact semantics they need (empty = existence, `SIGNATURE_FLAGS` = canonical declaration, `DECLARATION_FLAGS` = real body, `ANY_DECLARATION_FLAGS` = anything trueSrc-declared).
+
+Already migrated:
+- `MissingExplicitAnnotationInspection` — uses `MemberLookup.memberExistsUpstream` (empty filter).
+- `MissingOriginalAnnotationsInspection` — uses `MemberLookup.findSignatureAnchor` (`SIGNATURE_FLAGS`) and `MemberLookup.findLifetimeDeclarations` (`ANY_DECLARATION_FLAGS`).
+- Gutter arrows / Alt+Shift+W/S — use `DECLARATION_FLAGS`.
+- Alt+Shift+V popup — uses `allMemberVersions` (unfiltered, shows all versions).
+
+Still on the naive `findPreviousVersionClass` (not routing-aware; picks same-rel file even when the upstream version's declaration lives in a different-named extension):
+- `PriorVersionMemberHighlightFilter` — suppresses false "missing body" / "must be initialised" errors. Should ask the walker "is this member declared anywhere upstream" instead of opening an arbitrary upstream file and reading it.
+- `DescriptorReferences` — descriptor string references inside `@DeleteMethodsAndFields` / `@ModifySignature`. Uses the previous-version class to resolve descriptor targets; would want the walker so it handles extensions and rename chains correctly.
+- `ModifySignatureInspection` — checks "does the new name collide with an existing member in the previous version". Same story.
+
+When migrating, use `MemberLookup.memberExistsUpstream` for yes/no questions and `findSignatureAnchor` when you actually need a PSI to read from. If the call site needs a _class_ rather than a member, a parallel class-level helper in `MemberLookup` should be added (not yet needed).
 
 ---
 

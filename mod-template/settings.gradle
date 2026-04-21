@@ -1,5 +1,6 @@
 pluginManagement {
     includeBuild("../shared-gradle-api") //Remove this
+    includeBuild("../annotations") //Remove this
     includeBuild("../settings-gradle") //Remove this
     includeBuild("../main-gradle") //Remove this
     includeBuild("../merge-engine") //Remove this

@@ -362,6 +362,44 @@ public class ObsoleteHelper { ... }
 
 The class is removed from `patchedSrc` at build time. It can be reintroduced in a later version layer without issue.
 
+#### `@ModifyClass`
+Marks a class as a modifier of an upstream class. Two use cases:
+
+**1. Split a modification of one target across multiple files.** In one trueSrc version, multiple classes carrying `@ModifyClass(Target.class)` all contribute to the same merged target. They are called **sibling modifiers** and are virtually merged before the regular forward merge runs.
+
+```java
+// 1.21.1/common/.../MyModNetworkPatch.java
+@ModifyClass(MyMod.class)
+public class MyModNetworkPatch {
+    @OverwriteVersion public void sendPacket(...) { ... }
+}
+
+// 1.21.1/common/.../MyModBehaviorPatch.java
+@ModifyClass(MyMod.class)
+public class MyModBehaviorPatch {
+    @OverwriteVersion public void tick() { ... }
+}
+```
+
+The merged `MyMod.java` in `patchedSrc` contains both methods. Neither `MyModNetworkPatch.java` nor `MyModBehaviorPatch.java` appears in `patchedSrc` — only the merged target.
+
+**2. Target a class whose name or package differs from the modifier.** `@ModifyClass(Foo.class)` resolves the target by class literal (not a string), so IntelliJ's native rename/goto/find-usages works on the reference and cross-package modifications are unambiguous.
+
+**Implicit `@ModifyClass`.** A class declared at the same rel path as an upstream class but without `@ModifyClass` is treated as an implicit base extension for backwards compatibility — it participates as a sibling when other modifiers explicitly target the same class. The IDE flags this with a yellow "missing explicit @ModifyClass" warning (quick fix adds it) whenever a multi-file modification set is detected.
+
+**One-overwrite-per-version rule.** Within a single version, across all sibling modifiers of a target, each member signature may have at most one **defining** file. A defining member is one carrying `@OverwriteVersion`, `@ModifySignature`, or declared as a brand-new member. `@ShadowVersion` references are pure pointers and may be duplicated freely across siblings. The merge engine fails the build on any violation listing all offending files; the IDE surfaces live violations as red-error inspections.
+
+**Class-level annotation synchronization.** Siblings must agree on `@OverwriteTypeDeclaration`, `@DeleteMethodsAndFields`, and `@DeleteClass` (presence and content). Plain class declaration bits (extends, implements, type parameters, modifiers) only need to agree across siblings when `@OverwriteTypeDeclaration` is active — otherwise the base version's declaration is preserved and sibling declarations are cosmetic.
+
+**Hard errors.**
+- **Orphan target** — `@ModifyClass(Foo.class)` where `Foo` does not exist in any earlier version's patchedSrc. Creating a new class uses a plain declaration with no `@ModifyClass`.
+- **Inner-class placement** — `@ModifyClass` on a nested class. Inner-class support is not yet implemented.
+- **Inner-class target** — `@ModifyClass(Outer.Inner.class)` targeting a nested class. Also deferred.
+
+Each matches a live IDE inspection (red error) so violations surface at edit time.
+
+> **IDE caveat — run a full build after adding or removing `@ModifyClass`.** The IDE's per-save incremental updater uses routing produced by the last full build. Adding or removing `@ModifyClass` on a file (creating or dissolving a sibling group) changes the routing, but the IDE won't know about the new group until the next full `generatePatchedJava` / `generateAllPatchedSrc`. The first save cycle after such an annotation change can produce stale patchedSrc for the affected group. **Run a full build whenever you add or remove `@ModifyClass`.** Edits *inside* an already-established group (method bodies, `@OverwriteVersion` / `@ShadowVersion` flips, `@ModifySignature` renames) don't need this — incremental updates handle them.
+
 ---
 
 ### Resource patching

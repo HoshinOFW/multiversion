@@ -23,9 +23,10 @@ private fun checkMember(member: PsiMember, holder: ProblemsHolder) {
     if (modList.hasAnnotation(SHADOW_FQN)) return
     if (modList.hasAnnotation(MODIFY_SIGNATURE_FQN)) return
 
-    val containingClass = member.containingClass ?: return
-    val prevClass = findPreviousVersionClass(containingClass) ?: return
-    findMatchingMember(member, prevClass) ?: return
+    // "Does the member exist in any upstream version at all" — routing-aware via origin
+    // map, rename-chain aware, routing-corrected by the walker; includes purely-inherited
+    // entries, so any upstream mention counts.
+    if (!MemberLookup.memberExistsUpstream(member)) return
 
     val nameElement = when (member) {
         is PsiMethod -> member.nameIdentifier ?: return

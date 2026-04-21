@@ -76,6 +76,11 @@
         <compositeConfiguration>
           <compositeBuild compositeDefinitionSource="SCRIPT">
             <builds>
+              <build path="$PROJECT_DIR$/annotations" name="annotations">
+                <projects>
+                  <project path="$PROJECT_DIR$/annotations" />
+                </projects>
+              </build>
               <build path="$PROJECT_DIR$/main-gradle" name="main-gradle">
                 <projects>
                   <project path="$PROJECT_DIR$/main-gradle" />
@@ -103,6 +108,7 @@
         <option name="gradleJvm" value="#JAVA_HOME" />
         <option name="modules">
           <set>
+            <option value="$PROJECT_DIR$/annotations" />
             <option value="$PROJECT_DIR$/main-gradle" />
             <option value="$PROJECT_DIR$/merge-engine" />
             <option value="$PROJECT_DIR$/mod-template" />

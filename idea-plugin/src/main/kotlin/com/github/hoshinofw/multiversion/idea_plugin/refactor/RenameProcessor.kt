@@ -59,11 +59,15 @@ class MultiversionRenameProcessor : RenamePsiElementProcessor() {
             val isCurrentRoot = otherRoot.path == moduleRoot.path
 
             // ── src/main/java (other versions only) ──────────────────────────
+            // Routing-aware: an extension (e.g. FooExt.java with @ModifyClass(Foo.class))
+            // in `otherRoot` is a sibling of this class and needs the rename propagated
+            // into its member declarations too. Iterate every sibling for the target; their
+            // filenames match neither `elementClass.name` nor the origin rel, so we process
+            // each by its primary top-level class.
             if (!isCurrentRoot) {
-                val otherFile    = findCorrespondingFile(file, srcRoot, otherRoot)
-                val otherPsiFile = otherFile?.let { psiManager.findFile(it) as? PsiJavaFile }
-                if (otherPsiFile != null) {
-                    addMatchingElements(element, newName, otherPsiFile, elementClass, allRenames)
+                for (otherFile in findCorrespondingModifierFiles(file, srcRoot, moduleRoot, otherRoot)) {
+                    val otherPsiFile = psiManager.findFile(otherFile) as? PsiJavaFile ?: continue
+                    addMatchingElementsInSiblingFile(element, newName, otherPsiFile, elementClass, allRenames)
                 }
             }
 
@@ -88,6 +92,34 @@ class MultiversionRenameProcessor : RenamePsiElementProcessor() {
                 val matched = findMatchingElement(element, targetClass)
                 if (matched != null && matched !== element) allRenames[matched] = newName
             }
+    }
+
+    /**
+     * Variant of [addMatchingElements] for sibling trueSrc files where the primary
+     * top-level class may not share the origin class's name (an extension via
+     * `@ModifyClass`). Matches on the file's primary top-level class (`<filename>` or the
+     * first declared class if there's no name-matching top-level), so rename propagation
+     * reaches members of extensions like `FooExt.java` when renaming a member of `Foo`.
+     */
+    private fun addMatchingElementsInSiblingFile(
+        element: PsiElement,
+        newName: String,
+        psiFile: PsiJavaFile,
+        elementClass: PsiClass,
+        allRenames: MutableMap<PsiElement, String>
+    ) {
+        val fileName = psiFile.virtualFile?.nameWithoutExtension
+        val primaryClass = psiFile.classes.firstOrNull { it.name == fileName }
+            ?: psiFile.classes.firstOrNull()
+            ?: return
+        // If the primary class name matches the origin class name, the existing filter
+        // path already handles it; preserve that behavior for the same-rel case.
+        if (primaryClass.name == elementClass.name) {
+            addMatchingElements(element, newName, psiFile, elementClass, allRenames)
+            return
+        }
+        val matched = findMatchingElement(element, primaryClass)
+        if (matched != null && matched !== element) allRenames[matched] = newName
     }
 
     /**
@@ -116,14 +148,17 @@ class MultiversionRenameProcessor : RenamePsiElementProcessor() {
 
         for (otherRoot in findAllVersionModuleRoots(moduleRoot)) {
             if (otherRoot.path == moduleRoot.path) continue
-            val otherFile    = findCorrespondingFile(file, srcRoot, otherRoot) ?: continue
-            val otherPsiFile = psiManager.findFile(otherFile) as? PsiJavaFile  ?: continue
-
-            for (cls in otherPsiFile.classes) {
-                collectDescriptorRefs(cls.annotations.toList(), name, element, refs)
-                // Also scan member-level annotations (e.g. @ModifySignature on methods/fields)
-                for (method in cls.methods) collectDescriptorRefs(method.annotations.toList(), name, element, refs)
-                for (field in cls.fields) collectDescriptorRefs(field.annotations.toList(), name, element, refs)
+            // Routing-aware: descriptor annotations on members of a sibling extension
+            // (e.g. @ModifySignature inside FooExt.java targeting a method of Foo) still
+            // need to be scanned for descriptor references to the renamed member.
+            for (otherFile in findCorrespondingModifierFiles(file, srcRoot, moduleRoot, otherRoot)) {
+                val otherPsiFile = psiManager.findFile(otherFile) as? PsiJavaFile ?: continue
+                for (cls in otherPsiFile.classes) {
+                    collectDescriptorRefs(cls.annotations.toList(), name, element, refs)
+                    // Also scan member-level annotations (e.g. @ModifySignature on methods/fields)
+                    for (method in cls.methods) collectDescriptorRefs(method.annotations.toList(), name, element, refs)
+                    for (field in cls.fields) collectDescriptorRefs(field.annotations.toList(), name, element, refs)
+                }
             }
         }
 

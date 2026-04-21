@@ -1,5 +1,6 @@
 package com.github.hoshinofw.multiversion.idea_plugin.navigation
 
+import com.github.hoshinofw.multiversion.engine.OriginNavigation
 import com.github.hoshinofw.multiversion.idea_plugin.navigation.util.*
 import com.github.hoshinofw.multiversion.idea_plugin.util.isMultiversionProject
 import com.intellij.codeInsight.daemon.LineMarkerInfo
@@ -38,19 +39,22 @@ class VersionNavigationLineMarkerProvider : LineMarkerProvider {
             if (element !is PsiIdentifier) continue
             val parent = element.parent
 
+            // Arrows/keybinds only navigate between real declarations (OVERWRITE / MODSIG / NEW);
+            // @ShadowVersion-only destinations are skipped since they're references, not bodies.
+            val filter = OriginNavigation.DECLARATION_FLAGS
             when (parent) {
                 is PsiMethod, is PsiField -> {
                     val member = parent as PsiMember
                     val key = memberKeyOf(member) ?: continue
-                    val hasUp = hasTrueSrcMember(nav, key, -1)
-                    val hasDown = hasTrueSrcMember(nav, key, +1)
+                    val hasUp = hasMember(nav, key, -1, filter)
+                    val hasDown = hasMember(nav, key, +1, filter)
                     if (hasUp) result.add(createMarker(element, -1))
                     if (hasDown) result.add(createMarker(element, +1))
                 }
                 is PsiClass -> {
                     if (element != parent.nameIdentifier) continue
-                    val hasUp = hasTrueSrcClass(nav, -1)
-                    val hasDown = hasTrueSrcClass(nav, +1)
+                    val hasUp = hasClass(nav, -1, filter)
+                    val hasDown = hasClass(nav, +1, filter)
                     if (hasUp) result.add(createMarker(element, -1))
                     if (hasDown) result.add(createMarker(element, +1))
                 }
@@ -86,14 +90,15 @@ class VersionNavigationLineMarkerProvider : LineMarkerProvider {
         val file = identifier.containingFile?.virtualFile ?: return null
         val nav = buildNavigationContext(file) ?: return null
         val parent = identifier.parent
+        val filter = OriginNavigation.DECLARATION_FLAGS
         return when (parent) {
             is PsiClass -> {
-                val hit = nearestTrueSrcClass(nav, direction) ?: return null
+                val hit = nearestTrueSrcClass(nav, direction, filter) ?: return null
                 openClassHit(project, nav, hit)
             }
             is PsiMember -> {
                 val key = memberKeyOf(parent) ?: return null
-                val hit = nearestTrueSrcMember(nav, key, direction) ?: return null
+                val hit = nearestTrueSrcMember(nav, key, direction, filter) ?: return null
                 openMemberHit(project, nav, hit)
             }
             else -> null

@@ -81,24 +81,41 @@ fun findLaterVersionModuleRoots(moduleRoot: VirtualFile): List<VirtualFile> {
 }
 
 /**
- * Given a file under [originSrcRoot], returns the corresponding file under
- * `<targetModuleRoot>/src/main/java/`, or null if it doesn't exist.
+ * Returns every trueSrc file under [targetModuleRoot] that corresponds to [originFile] in
+ * the `@ModifyClass` sense — i.e. every sibling extension in [targetModuleRoot] that
+ * targets the same class as [originFile] does in [originModuleRoot]:
+ *
+ * 1. Resolve [originFile]'s target rel via [originModuleRoot]'s routing (fallback to the
+ *    origin rel itself when it is not a modifier).
+ * 2. Enumerate [targetModuleRoot]'s modifiers of that target rel; fall back to the target
+ *    rel itself if no modifiers are recorded.
+ * 3. Resolve each modifier rel to a [VirtualFile]; skip any that don't exist.
+ *
+ * Used by rename propagation so renames that originate in a class with extension
+ * siblings in other versions reach every sibling file, not just the same-rel file.
  */
-fun findCorrespondingFile(originFile: VirtualFile, originSrcRoot: VirtualFile, targetModuleRoot: VirtualFile): VirtualFile? =
-    try {
-        val rel = PathUtil.relativize(originSrcRoot.toNioPath(), originFile.toNioPath())
-        targetModuleRoot.findFileByRelativePath("${PathUtil.TRUE_SRC_MARKER}/$rel")
-    } catch (_: Exception) { null }
+fun findCorrespondingModifierFiles(
+    originFile: VirtualFile,
+    originSrcRoot: VirtualFile,
+    originModuleRoot: VirtualFile,
+    targetModuleRoot: VirtualFile,
+): List<VirtualFile> {
+    val originRel = try {
+        PathUtil.relativize(originSrcRoot.toNioPath(), originFile.toNioPath())
+    } catch (_: Exception) { return emptyList() }
 
-/**
- * Like [findCorrespondingFile] but checks `build/patchedSrc/main/java/` instead of `src/main/java/`.
- * Used when the class only exists as inherited content in patchedSrc (no trueSrc override).
- */
-fun findCorrespondingPatchedFile(originFile: VirtualFile, originSrcRoot: VirtualFile, targetModuleRoot: VirtualFile): VirtualFile? =
-    try {
-        val rel = PathUtil.relativize(originSrcRoot.toNioPath(), originFile.toNioPath())
-        targetModuleRoot.findFileByRelativePath("${PathUtil.PATCHED_SRC_DIR}/${PathUtil.JAVA_SRC_SUBDIR}/$rel")
-    } catch (_: Exception) { null }
+    val originRouting = com.github.hoshinofw.multiversion.idea_plugin.engine.MergeEngineCache
+        .routingForModuleRoot(originModuleRoot)
+    val targetRel = originRouting.getTarget(originRel) ?: originRel
+
+    val targetRouting = com.github.hoshinofw.multiversion.idea_plugin.engine.MergeEngineCache
+        .routingForModuleRoot(targetModuleRoot)
+    val modifierRels = targetRouting.getModifiers(targetRel).ifEmpty { listOf(targetRel) }
+
+    return modifierRels.mapNotNull { modRel ->
+        targetModuleRoot.findFileByRelativePath("${PathUtil.TRUE_SRC_MARKER}/$modRel")
+    }
+}
 
 // -- Path classification helpers ------------------------------------------------
 

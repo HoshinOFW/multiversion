@@ -73,17 +73,31 @@ class PatchedSrcEditorRedirectListener(private val project: Project) : FileEdito
         val moduleName = afterVersion.substringBefore(trueSrcMarker)
         val relClassPath = normPath.substring(srcIdx + trueSrcMarker.length)
 
+        // Resolve the caret file's target rel through its own routing. For a base extension
+        // (same-named @ModifyClass target) or a plain trueSrc class this is identical to
+        // [relClassPath]; for an extension it's the target class's rel.
         val lfs = LocalFileSystem.getInstance()
         val psiManager = PsiManager.getInstance(project)
 
+        val currentModuleRoot = lfs.findFileByIoFile(File(ctx.versionDirs[ctx.currentIdx], moduleName))
+        val currentRouting = currentModuleRoot?.let { MergeEngineCache.routingForModuleRoot(it) }
+        val targetRel = currentRouting?.getTarget(relClassPath) ?: relClassPath
+
         for (vDir in ctx.versionDirs) {
             if (vDir.name == ctx.currentVersion) continue
-            val srcFile = File(vDir, "$moduleName/${PathUtil.TRUE_SRC_MARKER}/$relClassPath")
-            val patchedFile = File(vDir, "$moduleName/${PathUtil.PATCHED_SRC_DIR}/${PathUtil.JAVA_SRC_SUBDIR}/$relClassPath")
-            val ioFile = if (srcFile.exists()) srcFile else if (patchedFile.exists()) patchedFile else continue
-            val vf = lfs.findFileByIoFile(ioFile) ?: continue
-            // Touch the PSI tree so it's cached for fast navigation
-            psiManager.findFile(vf)
+            val otherModuleRoot = lfs.findFileByIoFile(File(vDir, moduleName))
+            val otherRouting = otherModuleRoot?.let { MergeEngineCache.routingForModuleRoot(it) }
+            // Every sibling extension of the target in this version, plus the target itself as
+            // a fallback (handles plain trueSrc classes that have no routing entry).
+            val siblingRels = otherRouting?.getModifiers(targetRel).orEmpty()
+                .ifEmpty { listOf(targetRel) }
+            for (relToOpen in siblingRels) {
+                val srcFile = File(vDir, "$moduleName/${PathUtil.TRUE_SRC_MARKER}/$relToOpen")
+                val patchedFile = File(vDir, "$moduleName/${PathUtil.PATCHED_SRC_DIR}/${PathUtil.JAVA_SRC_SUBDIR}/$relToOpen")
+                val ioFile = if (srcFile.exists()) srcFile else if (patchedFile.exists()) patchedFile else continue
+                val vf = lfs.findFileByIoFile(ioFile) ?: continue
+                psiManager.findFile(vf)
+            }
         }
     }
 }

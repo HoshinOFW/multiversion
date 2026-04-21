@@ -1,5 +1,6 @@
 package com.github.hoshinofw.multiversion.idea_plugin.refactor
 
+import com.github.hoshinofw.multiversion.engine.ClassRoutingMap
 import com.github.hoshinofw.multiversion.engine.OriginMap
 import com.github.hoshinofw.multiversion.engine.PathUtil
 import com.github.hoshinofw.multiversion.idea_plugin.project.PluginSettings
@@ -171,24 +172,37 @@ class MoveListener(private val project: Project) : RefactoringEventListener {
 
     /**
      * After a rename, patches method/field key prefixes or file-level paths in every
-     * patchedSrc _originMap.tsv reachable from [saved]'s module root.
+     * patchedSrc `_originMap.tsv` reachable from [saved]'s module root. For class renames,
+     * also asks the engine to move any `@ModifyClass` routing sidecar (target rename) AND
+     * rewrite sidecar contents (in case the renamed class was itself a modifier).
+     *
+     * Sidecar I/O delegates to [ClassRoutingMap.Sidecars] — the IDE never touches sidecar
+     * files directly, same pattern as how the origin map is accessed via [OriginMap] rather
+     * than raw file I/O.
      */
     private fun updateTsvForRename(saved: SavedRename, newName: String) {
         val oldMemberName = saved.oldMemberName
         if (oldMemberName == newName) return
 
         if (oldMemberName == null) {
-            // Class rename: the .java filename changes.
             val dir        = saved.relClassPath.substringBeforeLast('/', "")
             val oldRelPath = saved.relClassPath
             val newRelPath = if (dir.isEmpty()) "$newName.java" else "$dir/$newName.java"
-            patchAllVersionMaps(saved.moduleRoot) { map -> map.renameFile(oldRelPath, newRelPath) }
+            patchAllVersionMaps(saved.moduleRoot) { _, map -> map.renameFile(oldRelPath, newRelPath) }
+            renameRoutingAcrossVersions(saved.moduleRoot, oldRelPath, newRelPath)
         } else {
-            // Method or field rename: update member-key portion of TSV keys.
             val oldPrefix = if (saved.isMemberMethod) "$oldMemberName(" else oldMemberName
             val newPrefix = if (saved.isMemberMethod) "$newName("       else newName
-            patchAllVersionMaps(saved.moduleRoot) { map ->
-                map.renameMember(saved.relClassPath, oldPrefix, newPrefix)
+            // Member-level origin-map keys are stored under the TARGET rel, not the
+            // extension's own rel. For extensions (e.g. renaming a member of `FooExt.java`
+            // that targets `Foo.java`), resolve the per-version target via routing before
+            // calling renameMember — otherwise the keys under `Foo.java#…` stay at the old
+            // name.
+            patchAllVersionMaps(saved.moduleRoot) { root, map ->
+                val routing = com.github.hoshinofw.multiversion.idea_plugin.engine.MergeEngineCache
+                    .routingForModuleRoot(root)
+                val effectiveRel = routing.getTarget(saved.relClassPath) ?: saved.relClassPath
+                map.renameMember(effectiveRel, oldPrefix, newPrefix)
             }
         }
     }
@@ -198,18 +212,75 @@ class MoveListener(private val project: Project) : RefactoringEventListener {
         oldRelPath: String,
         newRelPath: String,
     ) {
-        patchAllVersionMaps(moduleRoot) { map -> map.renameFile(oldRelPath, newRelPath) }
+        patchAllVersionMaps(moduleRoot) { _, map -> map.renameFile(oldRelPath, newRelPath) }
+        renameRoutingAcrossVersions(moduleRoot, oldRelPath, newRelPath)
     }
 
+    /**
+     * Tells the engine's sidecar helpers to fix up every version's routing sidecars after
+     * a class-file rel change. Both paths run unconditionally — each helper is a no-op when
+     * the rel in question isn't present in that version's sidecars.
+     *
+     * - [ClassRoutingMap.Sidecars.renameTarget] handles the case where the renamed/moved
+     *   class was itself a target (sidecar filename needs to follow).
+     * - [ClassRoutingMap.Sidecars.renameModifier] handles the case where the renamed/moved
+     *   class was listed as a modifier inside some sidecar (content line needs replacing).
+     *
+     * **Caveat**: when the rename changes the alphabetical position of a modifier inside a
+     * sibling group, the sibling index (`S`) embedded in member-level origin-map values
+     * still points at the old position. Navigation may land on the wrong sibling file until
+     * the user runs `generateAllPatchedSrc` to regenerate origin entries. A warning is logged
+     * once per affected version so the user knows to rebuild. Matches the `@ModifyClass`
+     * add/remove caveat in README.
+     */
+    private fun renameRoutingAcrossVersions(
+        moduleRoot: com.intellij.openapi.vfs.VirtualFile,
+        oldRelPath: String,
+        newRelPath: String,
+    ) {
+        if (oldRelPath == newRelPath) return
+        for (root in findAllVersionModuleRoots(moduleRoot)) {
+            val patchedJavaDir = File(root.path, "${PathUtil.PATCHED_SRC_DIR}/${PathUtil.JAVA_SRC_SUBDIR}")
+            if (!patchedJavaDir.isDirectory) continue
+
+            val routingBefore = ClassRoutingMap.fromPatchedSrcDir(patchedJavaDir)
+            val targetOfOld = routingBefore.getTarget(oldRelPath)
+
+            ClassRoutingMap.Sidecars.renameTarget(patchedJavaDir, oldRelPath, newRelPath)
+            ClassRoutingMap.Sidecars.renameModifier(patchedJavaDir, oldRelPath, newRelPath)
+
+            if (targetOfOld != null) {
+                val siblingsBefore = routingBefore.getModifiers(targetOfOld)
+                val siblingsAfter = siblingsBefore.toMutableList().apply {
+                    val idx = indexOf(oldRelPath)
+                    if (idx >= 0) set(idx, newRelPath)
+                }.sorted()
+                val beforeSorted = siblingsBefore.sorted()
+                if (beforeSorted != siblingsAfter && beforeSorted.indexOf(oldRelPath) != siblingsAfter.indexOf(newRelPath)) {
+                    com.intellij.openapi.diagnostic.Logger.getInstance(MoveListener::class.java).warn(
+                        "Routing rename in ${root.name} shifted modifier alphabetical order for '$targetOfOld' " +
+                            "($oldRelPath -> $newRelPath). Sibling indices in _originMap.tsv may be stale; " +
+                            "run generateAllPatchedSrc to regenerate."
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Iterates every version module reachable from [moduleRoot], opens its origin map,
+     * runs [action], and writes the result back. The action receives the module root too
+     * so callers that need per-version context (routing lookup, etc.) have it on hand.
+     */
     private fun patchAllVersionMaps(
         moduleRoot: com.intellij.openapi.vfs.VirtualFile,
-        action: (OriginMap) -> Unit,
+        action: (com.intellij.openapi.vfs.VirtualFile, OriginMap) -> Unit,
     ) {
         for (root in findAllVersionModuleRoots(moduleRoot)) {
             val tsv = File(root.path, "${PathUtil.PATCHED_SRC_DIR}/${PathUtil.ORIGIN_MAP_FILENAME}")
             if (!tsv.exists()) continue
             val map = OriginMap.fromFile(tsv)
-            action(map)
+            action(root, map)
             map.toFile(tsv)
         }
     }
