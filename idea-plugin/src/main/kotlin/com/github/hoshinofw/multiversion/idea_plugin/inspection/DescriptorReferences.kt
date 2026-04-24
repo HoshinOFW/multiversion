@@ -1,10 +1,8 @@
 package com.github.hoshinofw.multiversion.idea_plugin.inspection
 
 import com.github.hoshinofw.multiversion.engine.MemberDescriptor
-import com.github.hoshinofw.multiversion.idea_plugin.util.descriptorParamsMatch
-import com.github.hoshinofw.multiversion.idea_plugin.util.findPreviousVersionClass
+import com.github.hoshinofw.multiversion.idea_plugin.util.MemberLookup
 import com.github.hoshinofw.multiversion.idea_plugin.util.isMultiversionProject
-import com.github.hoshinofw.multiversion.idea_plugin.util.resolveDescriptorInClass
 import com.intellij.codeInspection.LocalInspectionTool
 import com.intellij.codeInspection.ProblemsHolder
 import com.intellij.openapi.util.TextRange
@@ -39,10 +37,8 @@ class DescriptorReference(
     private val annotatedClass: PsiClass
 ) : PsiReferenceBase<PsiLiteralExpression>(literal, TextRange(1, literal.textLength - 1)) {
 
-    override fun resolve(): PsiElement? {
-        val prevClass = findPreviousVersionClass(annotatedClass) ?: return null
-        return resolveDescriptorInClass(descriptor, prevClass)
-    }
+    override fun resolve(): PsiElement? =
+        MemberLookup.findMemberByDescriptor(annotatedClass, descriptor)?.member
 
     override fun getVariants(): Array<Any> = emptyArray()
 
@@ -68,10 +64,10 @@ class DescriptorAnnotationInspection : LocalInspectionTool() {
                 if (!isMultiversionProject(annotation.project)) return
                 if (!isDescriptorAnnotation(annotation.qualifiedName.orEmpty())) return
                 val psiClass = annotation.owner() ?: return
-                val prevClass = findPreviousVersionClass(psiClass) ?: return
+                val upstreamKeys = MemberLookup.upstreamMemberKeys(psiClass) ?: return
 
                 forEachDescriptorLiteral(annotation) { literal, descriptor ->
-                    val error = validateDescriptor(descriptor, prevClass, psiClass)
+                    val error = validateDescriptor(descriptor, upstreamKeys, psiClass)
                     if (error != null) holder.registerProblem(literal, error)
                 }
             }
@@ -81,43 +77,58 @@ class DescriptorAnnotationInspection : LocalInspectionTool() {
 // -- Validation --
 
 /**
- * Returns an error message if the descriptor is invalid, or null if it resolves cleanly.
- * Handles all ambiguity cases for "init" (constructor vs method vs field).
+ * Returns an error message if [descriptor] is invalid against the upstream member key set,
+ * or null if it resolves cleanly. Operates on origin-map keys rather than a PsiClass so no
+ * upstream file is opened — answers come from the engine's in-memory origin map.
  */
-private fun validateDescriptor(descriptor: String, targetClass: PsiClass, sourceClass: PsiClass): String? {
+private fun validateDescriptor(descriptor: String, upstreamKeys: Set<String>, sourceClass: PsiClass): String? {
     val parsed = MemberDescriptor.parseDescriptor(descriptor)
 
     if (parsed.name == "init") {
-        val ctors = targetClass.constructors
-        val methods = targetClass.findMethodsByName("init", false)
-        val field = targetClass.findFieldByName("init", false)
+        val ctorKeys = upstreamKeys.filter { it.startsWith("<init>(") }
+        val methodKeys = upstreamKeys.filter {
+            val p = MemberDescriptor.parseDescriptor(it)
+            p.name == "init" && p.params != null
+        }
+        val fieldExists = upstreamKeys.contains("init")
 
-        val ctorMatch = if (parsed.params != null) ctors.find { descriptorParamsMatch(it, parsed.params!!) } else null
-        val methodMatch = if (parsed.params != null) methods.find { descriptorParamsMatch(it, parsed.params!!) } else null
+        val hasParams = parsed.params != null
+        val ctorMatched = hasParams && ctorKeys.any { keyParamsMatch(it, parsed.params!!) }
+        val methodMatched = hasParams && methodKeys.any { keyParamsMatch(it, parsed.params!!) }
 
         val resolution = MemberDescriptor.resolveInitAmbiguity(
-            ctorCount = ctors.size, methodCount = methods.size, fieldExists = field != null,
-            hasParams = parsed.params != null, ctorMatched = ctorMatch != null, methodMatched = methodMatch != null,
+            ctorCount = ctorKeys.size, methodCount = methodKeys.size, fieldExists = fieldExists,
+            hasParams = hasParams, ctorMatched = ctorMatched, methodMatched = methodMatched,
         )
-        if (resolution.error != null) return resolution.error
-        return null
+        return resolution.error
     }
 
-    // Non-"init" descriptors
     if (parsed.params == null) {
-        val methods = targetClass.findMethodsByName(parsed.name, false)
-        if (methods.size == 1) return null
-        if (methods.isEmpty()) {
-            val field = targetClass.findFieldByName(parsed.name, false)
-            return if (field != null) null
+        val methodKeys = upstreamKeys.filter {
+            val p = MemberDescriptor.parseDescriptor(it)
+            p.name == parsed.name && p.params != null
+        }
+        if (methodKeys.size == 1) return null
+        if (methodKeys.isEmpty()) {
+            val fieldExists = upstreamKeys.contains(parsed.name)
+            return if (fieldExists) null
             else "'${parsed.name}' member reference could not be resolved in ${sourceClass.name}"
         }
-        return "'${parsed.name}' is ambiguous: ${methods.size} overloads exist, specify parameter types"
+        return "'${parsed.name}' is ambiguous: ${methodKeys.size} overloads exist, specify parameter types"
     }
 
-    val resolved = resolveDescriptorInClass(descriptor, targetClass)
-    return if (resolved != null) null
+    val resolved = upstreamKeys.any {
+        val p = MemberDescriptor.parseDescriptor(it)
+        p.name == parsed.name && p.params != null &&
+            MemberDescriptor.matchesParams(p.params!!, parsed.params!!)
+    }
+    return if (resolved) null
     else "'$descriptor' member reference could not be resolved in ${sourceClass.name}"
+}
+
+private fun keyParamsMatch(key: String, expectedParams: List<String>): Boolean {
+    val p = MemberDescriptor.parseDescriptor(key)
+    return p.params != null && MemberDescriptor.matchesParams(p.params!!, expectedParams)
 }
 
 // -- Shared helpers --

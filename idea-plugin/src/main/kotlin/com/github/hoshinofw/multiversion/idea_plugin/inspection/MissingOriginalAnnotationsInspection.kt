@@ -24,20 +24,28 @@ private val IGNORED_ANNOTATIONS = setOf(
  * Warns when a `@ShadowVersion` / `@OverwriteVersion` member's user-facing annotations
  * diverge from the canonical declaration's annotations in its signature lifetime.
  *
+ * Covers member-level annotations (modifier list + declared type element) and method
+ * parameter annotations per-index. Parameter coverage is positional: `@NotNull` on
+ * param 0 is a different claim than `@NotNull` on param 1, so transpositions are
+ * flagged. If the current and canonical differ in parameter count, the per-parameter
+ * comparison is skipped (meaningless without index alignment) and only the member-level
+ * check runs.
+ *
  * The canonical declaration is the nearest upstream version where the member's signature
- * was defined (`NEW` or `MODSIG`) — every version between that anchor and the next
+ * was defined (`NEW` or `MODSIG`). Every version between that anchor and the next
  * signature boundary downstream shares the same logical signature and therefore the same
  * annotation contract. The inspection reads the canonical annotations via
  * [MemberLookup.findSignatureAnchor] (routing + rename aware).
  *
- * Scope is limited to `@ShadowVersion` / `@OverwriteVersion` members — members that claim
- * to mirror an upstream signature. The symmetric case (the canonical declaration itself
- * noticing that downstream siblings disagree) belongs to a separate inspection; see
- * `todo.md` under "Observed Bugs" for the split plan.
+ * Scope is limited to `@ShadowVersion` / `@OverwriteVersion` members, i.e. members that
+ * claim to mirror an upstream signature. The symmetric case (the canonical declaration
+ * itself noticing that downstream siblings disagree) belongs to a separate inspection;
+ * see `todo.md` under "Observed Bugs" for the split plan.
  *
- * One quick fix: "Match to declaration" — add the canonical's annotations to the current
- * member. The inverse direction (propagate annotations from the canonical to the rest of
- * the lifetime) is the NEW/MODSIG inspection's job.
+ * One quick fix: "Match to declaration" adds every missing annotation to the slot it
+ * belongs on. Strict contract: the fix only inserts annotation tokens (plus the required
+ * imports). It never renames parameters, changes types, modifies bodies, or touches any
+ * other tokens, matching the behaviour shape of Java's built-in `@Override` fix.
  */
 class MissingOriginalAnnotationsInspection : LocalInspectionTool() {
 
@@ -53,17 +61,23 @@ private fun checkMember(member: PsiMember, holder: ProblemsHolder) {
     val modList = (member as? PsiModifierListOwner)?.modifierList ?: return
 
     // Gate: only fire on members that claim to mirror an upstream signature. NEW / MODSIG
-    // (signature-owner) cases are handled by a separate inspection — see todo.md.
+    // (signature-owner) cases are handled by a separate inspection; see todo.md.
     val hasOverwrite = modList.hasAnnotation(OVERWRITE_FQN)
     val hasShadow = modList.hasAnnotation(SHADOW_FQN)
     if (!hasOverwrite && !hasShadow) return
 
     val anchor = MemberLookup.findSignatureAnchor(member) ?: return
 
-    val canonicalAnnotations = collectTransferableAnnotations(anchor.member)
-    val currentFqns = collectTransferableAnnotations(member).map { it.qualifiedName }.toSet()
+    val canonical = collectTransferableAnnotations(anchor.member)
+    val current = collectTransferableAnnotations(member)
 
-    val missing = canonicalAnnotations.filter { it.qualifiedName !in currentFqns }
+    // Per-param comparison is only meaningful when both sides have the same parameter
+    // count; otherwise the indexes don't line up and we'd flag arbitrary drift.
+    val canonicalParamCount = (anchor.member as? PsiMethod)?.parameterList?.parametersCount
+    val currentParamCount = (member as? PsiMethod)?.parameterList?.parametersCount
+    val paramCountAligned = canonicalParamCount != null && canonicalParamCount == currentParamCount
+
+    val missing = computeMissing(canonical, current, paramCountAligned)
     if (missing.isEmpty()) return
 
     val nameElement = when (member) {
@@ -72,52 +86,90 @@ private fun checkMember(member: PsiMember, holder: ProblemsHolder) {
         else -> return
     }
 
-    val missingTexts = missing.map { it.text }
-    val missingFqns = missing.mapNotNull { it.qualifiedName }
     holder.registerProblem(
         nameElement,
-        "Missing original annotations: ${missingFqns.joinToString(", ") { "@${it.substringAfterLast('.')}" }}",
-        AddOriginalAnnotationsFix(missingTexts, missingFqns),
+        "Missing original annotations: ${formatMissing(missing, member)}",
+        AddOriginalAnnotationsFix(
+            annotationFqns = missing.map { it.qualifiedName },
+            annotationTexts = missing.map { it.text },
+            paramIndexes = missing.map { (it.position as? AnnotationPosition.Param)?.index ?: -1 },
+        ),
     )
 }
 
 /**
- * Collects annotations the inspection compares across versions. Looks in two positions:
+ * Missing = entries on the canonical at position P that have no same-FQN entry on
+ * current at position P. `Param(*)` buckets are skipped entirely when the parameter
+ * counts don't align, since per-index comparison would be arbitrary.
+ */
+private fun computeMissing(
+    canonical: List<AnnotationInfo>,
+    current: List<AnnotationInfo>,
+    paramCountAligned: Boolean,
+): List<AnnotationInfo> {
+    val currentByPos: Map<AnnotationPosition, Set<String>> =
+        current.groupBy { it.position }.mapValues { (_, v) -> v.map { it.qualifiedName }.toSet() }
+
+    return canonical.filter { info ->
+        if (info.position is AnnotationPosition.Param && !paramCountAligned) return@filter false
+        info.qualifiedName !in currentByPos[info.position].orEmpty()
+    }
+}
+
+private fun formatMissing(missing: List<AnnotationInfo>, member: PsiMember): String =
+    missing.joinToString(", ") { info ->
+        val shortName = "@${info.qualifiedName.substringAfterLast('.')}"
+        when (val pos = info.position) {
+            AnnotationPosition.MemberLevel -> shortName
+            is AnnotationPosition.Param -> {
+                val paramName = (member as? PsiMethod)?.parameterList?.parameters?.getOrNull(pos.index)?.name
+                if (paramName != null) "$shortName on '$paramName'" else "$shortName on param ${pos.index}"
+            }
+        }
+    }
+
+/**
+ * Collects annotations the inspection compares across versions, tagged by position.
  *
- * - The member's own modifier list (`@NotNull public static final String MOD_ID`).
- * - The declared type element (`public static final @NotNull String MOD_ID`, or
- *   `public @NotNull String getFoo()` for methods).
+ * Member-level positions (the member's own modifier list and its declared type element)
+ * are treated equivalently: a member "has @NotNull" regardless of which slot it sits in.
+ * Both slots share the `MemberLevel` bucket and are deduplicated by FQN.
  *
- * Both positions are treated as equivalent for contract purposes: a member "has @NotNull"
- * regardless of which slot it sits in. Duplicates by FQN across positions are collapsed
- * (first occurrence wins for the annotation text that's re-emitted by fixes).
- *
- * Method parameter annotations are NOT included — they're positional (`@NotNull` on
- * param 0 is a different claim than on param 1), so flattening them into a single set
- * would silently miss transpositions. Including them correctly requires per-index
- * comparison + per-index fix application; deferred until explicitly needed (see todo.md).
+ * Method parameter annotations are positional: `@NotNull` on param 0 is a different
+ * claim than `@NotNull` on param 1. Each parameter index gets its own `Param(i)` bucket
+ * covering both the parameter's modifier list and its declared type element (again
+ * deduped by FQN within the bucket).
  */
 private fun collectTransferableAnnotations(member: PsiMember): List<AnnotationInfo> {
-    val byFqn = LinkedHashMap<String, AnnotationInfo>()
+    val byKey = LinkedHashMap<Pair<AnnotationPosition, String>, AnnotationInfo>()
 
-    fun consider(annotation: PsiAnnotation?) {
+    fun consider(annotation: PsiAnnotation?, position: AnnotationPosition) {
         if (annotation == null) return
         val fqn = annotation.qualifiedName ?: return
         if (fqn.startsWith(MULTIVERSION_PACKAGE)) return
         if (fqn in IGNORED_ANNOTATIONS) return
-        byFqn.getOrPut(fqn) { AnnotationInfo(fqn, annotation.text) }
+        byKey.getOrPut(position to fqn) { AnnotationInfo(fqn, annotation.text, position) }
     }
 
-    (member as? PsiModifierListOwner)?.modifierList?.annotations?.forEach { consider(it) }
-    memberTypeElement(member)?.annotations?.forEach { consider(it) }
+    (member as? PsiModifierListOwner)?.modifierList?.annotations?.forEach {
+        consider(it, AnnotationPosition.MemberLevel)
+    }
+    memberTypeElement(member)?.annotations?.forEach {
+        consider(it, AnnotationPosition.MemberLevel)
+    }
+    (member as? PsiMethod)?.parameterList?.parameters?.forEachIndexed { i, param ->
+        val pos = AnnotationPosition.Param(i)
+        param.modifierList?.annotations?.forEach { consider(it, pos) }
+        param.typeElement?.annotations?.forEach { consider(it, pos) }
+    }
 
-    return byFqn.values.toList()
+    return byKey.values.toList()
 }
 
 /**
  * The declared type element for a member whose type participates in the annotation
- * contract — field type, method return type. Null for constructors and for members
- * without a single declared type.
+ * contract: field type for fields, return type for methods. Null for constructors and
+ * for members without a single declared type.
  */
 private fun memberTypeElement(member: PsiMember): PsiTypeElement? = when (member) {
     is PsiField -> member.typeElement
@@ -125,24 +177,48 @@ private fun memberTypeElement(member: PsiMember): PsiTypeElement? = when (member
     else -> null
 }
 
-/**
- * True if [member] already carries an annotation with [fqn] anywhere we'd consider a
- * transferable slot (modifier list OR declared type element). Used by the quick fix so
- * it doesn't append a duplicate modifier-list copy when the annotation already exists
- * as a type-use.
- */
-private fun memberHasTransferableAnnotation(member: PsiMember, fqn: String): Boolean {
-    val modList = (member as? PsiModifierListOwner)?.modifierList
-    if (modList?.hasAnnotation(fqn) == true) return true
-    return memberTypeElement(member)?.annotations?.any { it.qualifiedName == fqn } == true
+/** Declared type element for a modifier-list owner, or null if it has none. */
+private fun ownerTypeElement(owner: PsiModifierListOwner): PsiTypeElement? = when (owner) {
+    is PsiField -> owner.typeElement
+    is PsiMethod -> owner.returnTypeElement
+    is PsiParameter -> owner.typeElement
+    else -> null
 }
 
-private data class AnnotationInfo(val qualifiedName: String, val text: String)
+/**
+ * True if [owner] already carries an annotation with [fqn] in any transferable slot:
+ * its own modifier list OR its declared type element. Used by the quick fix so it
+ * doesn't append a duplicate when the annotation already exists as a type-use.
+ */
+private fun ownerHasTransferableAnnotation(owner: PsiModifierListOwner, fqn: String): Boolean {
+    if (owner.modifierList?.hasAnnotation(fqn) == true) return true
+    return ownerTypeElement(owner)?.annotations?.any { it.qualifiedName == fqn } == true
+}
 
-/** Adds annotations from the canonical declaration to the caret member. */
+private sealed class AnnotationPosition {
+    object MemberLevel : AnnotationPosition()
+    data class Param(val index: Int) : AnnotationPosition()
+}
+
+private data class AnnotationInfo(
+    val qualifiedName: String,
+    val text: String,
+    val position: AnnotationPosition,
+)
+
+/**
+ * Adds annotations from the canonical declaration to the caret member. The fix only
+ * inserts annotation tokens. It never renames parameters, changes types, modifies
+ * bodies, or touches any other tokens.
+ *
+ * `paramIndexes[i] = -1` routes annotation `i` to the member itself (field / method
+ * modifier list). `paramIndexes[i] >= 0` routes it to the method's parameter at that
+ * index, located by position; parameter names are never read or written.
+ */
 private class AddOriginalAnnotationsFix(
-    private val annotationTexts: List<String>,
     private val annotationFqns: List<String>,
+    private val annotationTexts: List<String>,
+    private val paramIndexes: List<Int>,
 ) : LocalQuickFix {
 
     override fun getName(): String = "Match to declaration"
@@ -151,24 +227,36 @@ private class AddOriginalAnnotationsFix(
 
     override fun applyFix(project: Project, descriptor: ProblemDescriptor) {
         val member = PsiTreeUtil.getParentOfType(descriptor.psiElement, PsiMember::class.java) ?: return
-        val modList = (member as? PsiModifierListOwner)?.modifierList ?: return
         val factory = JavaPsiFacade.getElementFactory(project)
+        val styleManager = JavaCodeStyleManager.getInstance(project)
+        val touchedModLists = linkedSetOf<PsiModifierList>()
 
-        for (i in annotationTexts.indices) {
+        for (i in annotationFqns.indices) {
             val fqn = annotationFqns[i]
-            // Skip if already present anywhere on the member — modifier list OR type-use
+            val paramIdx = paramIndexes[i]
+            val target: PsiModifierListOwner = if (paramIdx < 0) {
+                member as? PsiModifierListOwner ?: continue
+            } else {
+                (member as? PsiMethod)?.parameterList?.parameters?.getOrNull(paramIdx) ?: continue
+            }
+            // Skip if already present anywhere on the target: modifier list OR type-use
             // slot (e.g. `public @NotNull String getFoo()` already has it on the return
             // type; no need to add a duplicate at modifier position).
-            if (memberHasTransferableAnnotation(member, fqn)) continue
+            if (ownerHasTransferableAnnotation(target, fqn)) continue
+
             // Create with FQN so shortenClassReferences adds the missing import.
             // Preserve the original annotation arguments verbatim.
             val originalText = annotationTexts[i]
             val parenIdx = originalText.indexOf('(')
             val fqnText = if (parenIdx >= 0) "@$fqn${originalText.substring(parenIdx)}" else "@$fqn"
-            val annotation = factory.createAnnotationFromText(fqnText, member)
-            modList.addBefore(annotation, modList.annotations.firstOrNull() ?: modList.firstChild)
+            val annotation = factory.createAnnotationFromText(fqnText, target)
+            val targetModList = target.modifierList ?: continue
+            targetModList.addBefore(annotation, targetModList.annotations.firstOrNull() ?: targetModList.firstChild)
+            touchedModLists += targetModList
         }
 
-        JavaCodeStyleManager.getInstance(project).shortenClassReferences(modList)
+        // Shortening is scoped to just the touched modifier lists so the fix can't
+        // incidentally collapse fully-qualified references elsewhere in the member.
+        touchedModLists.forEach { styleManager.shortenClassReferences(it) }
     }
 }

@@ -47,6 +47,7 @@ class ShowAllVersionsPopupAction : AnAction(), DumbAware {
                 .setSelectionMode(ListSelectionModel.SINGLE_SELECTION)
                 .createPopup()
 
+            installShiftHandlers(popup, project)
             popup.showInBestPositionFor(editor)
         }.submit(AppExecutorUtil.getAppExecutorService())
     }
@@ -57,6 +58,58 @@ class ShowAllVersionsPopupAction : AnAction(), DumbAware {
     }
 
     override fun getActionUpdateThread() = com.intellij.openapi.actionSystem.ActionUpdateThread.BGT
+
+    /**
+     * Adds the Shift+click "open in new tab without closing origin" handler directly on
+     * the popup's JList, found by walking the popup's content tree.
+     *
+     * Why a separate handler instead of detecting Shift inside `itemChosenCallback`:
+     * `IPopupChooserBuilder`'s chooser-callback pipeline does not fire on Shift+left-click.
+     * IntelliJ treats Shift+click as a selection-modifier gesture and routes it away from
+     * the chosen-item dispatch, so `EventQueue.getCurrentEvent()`-based detection inside
+     * the callback is moot — the callback is never invoked for that gesture.
+     *
+     * The JList MouseListener below DOES receive Shift+click (Swing dispatches it like any
+     * other mouseClicked), so we intercept there. We filter on `e.isShiftDown` so the
+     * handler is a strict no-op for plain click — those still go through `itemChosenCallback`
+     * unchanged. There is no dual-path: exactly one path handles each gesture.
+     *
+     * If `findJList` can't locate the list (future IntelliJ layout change), the Shift
+     * feature silently doesn't work and plain click still goes through `itemChosenCallback`.
+     */
+    private fun installShiftHandlers(popup: com.intellij.openapi.ui.popup.JBPopup, project: Project) {
+        val list = findJList(popup.content) ?: return
+
+        list.addMouseListener(object : java.awt.event.MouseAdapter() {
+            override fun mouseClicked(e: java.awt.event.MouseEvent) {
+                if (!e.isShiftDown || e.button != java.awt.event.MouseEvent.BUTTON1) return
+                val idx = list.locationToIndex(e.point)
+                if (idx < 0) return
+                val entry = list.model.getElementAt(idx) as? VersionPopupEntry ?: return
+                openInNewTab(entry, popup, project)
+                e.consume()
+            }
+        })
+    }
+
+    private fun openInNewTab(entry: VersionPopupEntry, popup: com.intellij.openapi.ui.popup.JBPopup, project: Project) {
+        if (!entry.navigable) return
+        val target = entry.resolveTarget() ?: return
+        val currentEditor = FileEditorManager.getInstance(project).selectedTextEditor ?: return
+        popup.cancel()
+        navigateInPlace(project, currentEditor, target, keepOriginTab = true)
+    }
+
+    private fun findJList(component: java.awt.Component?): javax.swing.JList<*>? {
+        if (component == null) return null
+        if (component is javax.swing.JList<*>) return component
+        if (component is java.awt.Container) {
+            for (child in component.components) {
+                findJList(child)?.let { return it }
+            }
+        }
+        return null
+    }
 
     private fun popupTitle(context: PsiElement): String {
         val name = when (context) {
@@ -101,8 +154,11 @@ class ShowAllVersionsPopupAction : AnAction(), DumbAware {
                 listOf(toEntry(project, nav, view))
             } else {
                 val versionName = nav.ctx.versionDirs[view.versionIdx].name
-                val isCurrent = view.versionIdx == nav.currentIdx
+                val isCurrentVersion = view.versionIdx == nav.currentIdx
                 modifiers.map { modRel ->
+                    // Only the sibling row that matches the caret file gets the "current"
+                    // marker; other siblings in the same version are distinct files.
+                    val isCurrent = isCurrentVersion && modRel == nav.info.relClassPath
                     VersionPopupEntry(
                         version = versionName,
                         label = trueSrcClassLabel(nav, view.versionIdx, modRel),

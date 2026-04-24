@@ -188,25 +188,12 @@ class MultiversionPatchedSourceGeneration {
                     ? verToProj[versions[0]].tasks.named("generateBaseOriginMap")
                     : verToProj[versions[i - 1]].tasks.named("generatePatchedJava")
 
-            // OriginMap MUST be created inside task execution (doFirst), not at configuration time.
-            OriginMap originMap = null
-
             // Version indices used by the engine's compact origin-map format: V=versionIdx for
             // entries that originate in this version's trueSrc, V of a prior layer for entries
             // that came from an earlier overlay. Numeric indices are read by OriginResolver
             // which expands them back to version names via the IDE's version list.
             int versionIdx = i
             int baseVersionIdx = i - 1
-
-            // Records a file-level origin during the copy pass, carrying the V of the layer
-            // it came from. The merge engine overwrites these with richer entries during
-            // versionUpdatePatchedSrc for files it actually merges; this is the fallback
-            // for files that are inherited verbatim from an earlier layer.
-            def record = { String rel, int v ->
-                if (originMap == null) return
-                String relNorm = rel.replace('\\','/')
-                originMap.addFileEntry(relNorm, OriginMap.fmtFile(v, 0))
-            }
 
             // Compute merge base dirs before tasks.register to avoid closure-capture-in-loop
             File mergeBaseDir = i == 1
@@ -272,8 +259,11 @@ class MultiversionPatchedSourceGeneration {
                 t.doFirst {
                     try {
                         outJavaDir.get().asFile.deleteDir()
-
-                        originMap = new OriginMap()
+                        // Clear the prior run's _originMap.tsv so a subsequent uncaught crash in
+                        // doLast leaves no stale map for downstream versions to consume. The
+                        // engine writes a fresh map atomically at the end of processVersion;
+                        // missing == empty for downstream readers.
+                        mapFile.delete()
 
                         patchP.copy {
                             duplicatesStrategy = DuplicatesStrategy.INCLUDE
@@ -281,30 +271,23 @@ class MultiversionPatchedSourceGeneration {
 
                             // 0) root-level shared Java for this module (optional)
                             if (sharedJava.exists()) {
-                                from(sharedJava) { spec ->
-                                    spec.include("**/*.java")
-                                    // Shared java isn't versioned; record it against the oldest version
-                                    // as a best-effort "pre-exists" marker. Any merged class overwrites this.
-                                    spec.eachFile { d -> record(d.relativePath.pathString, 0) }
-                                }
+                                from(sharedJava) { spec -> spec.include("**/*.java") }
                             }
 
                             // 1) previous version layers (files overridden by any later layer are excluded)
                             javaLayers.each { layer ->
-                                int layerV = layer.v as int
                                 from(layer.dir as File) { spec ->
                                     spec.include("**/*.java")
                                     spec.exclude(layer.excluded as Collection)
-                                    spec.eachFile { d -> record(d.relativePath.pathString, layerV) }
                                 }
                             }
 
                             // 2) FINAL overlay: current version sources (never filtered)
-                            from(currentJavaSrcDir) { spec ->
-                                spec.include("**/*.java")
-                                spec.eachFile { d -> record(d.relativePath.pathString, versionIdx) }
-                            }
+                            from(currentJavaSrcDir) { spec -> spec.include("**/*.java") }
                         }
+                        // File-level origin entries for the copied files are emitted by the
+                        // engine's inherited-origin walk during versionUpdatePatchedSrc — no
+                        // record callback needed here.
                     } catch (Exception e) {
                         if (project.gradle.taskGraph.allTasks.any { it.name == "generateAllPatchedSrc" }) {
                             logger.warn("[patch-${moduleName}] patchedSrc copy failed for ${patchP.path}: ${e.message}")
@@ -315,25 +298,41 @@ class MultiversionPatchedSourceGeneration {
                 }
 
                 t.doLast {
+                    MergeEngine.VersionMergeResult mergeResult = null
                     try {
                         OriginMap baseOriginMap = (baseMapFile != null && baseMapFile.exists())
                                 ? OriginMap.fromFile(baseMapFile) : null
-                        MergeEngine.versionUpdatePatchedSrc(mergeCurrentSrcDir, mergeBaseDir, outJavaDir.get().asFile, versionIdx, baseVersionIdx, originMap, baseOriginMap)
+                        mapFile.parentFile.mkdirs()
+                        // Engine writes the (possibly partial) origin map to mapFile atomically
+                        // as the final step of processVersion — Gradle no longer touches the file.
+                        mergeResult = MergeEngine.versionUpdatePatchedSrc(
+                                mergeCurrentSrcDir, mergeBaseDir, outJavaDir.get().asFile,
+                                versionIdx, baseVersionIdx,
+                                mapFile, baseOriginMap)
                     } catch (Exception e) {
+                        // Genuine bug in the new code path (NPE etc.) — per-file failures are
+                        // collected into mergeResult.failures, not thrown.
                         if (project.gradle.taskGraph.allTasks.any { it.name == "generateAllPatchedSrc" }) {
-                            logger.warn("[patch-${moduleName}] patchedSrc merge failed for ${patchP.path}: ${e.message}")
+                            logger.warn("[patch-${moduleName}] patchedSrc merge crashed for ${patchP.path}: ${e.message}")
                         } else {
                             throw e
                         }
                     }
 
-                    mapFile.parentFile.mkdirs()
-                    if (originMap != null) {
-                        originMap.toFileAtomic(mapFile)
-                    } else {
-                        mapFile.text = ""
+                    if (mergeResult != null && !mergeResult.failures.isEmpty()) {
+                        mergeResult.failures.each { f ->
+                            logger.warn("[patch-${moduleName}] v${f.versionIdx} ${f.phase} failed for ${f.rel}: ${f.cause.message}")
+                        }
+                        String summary = "Multiversion merge for ${patchP.path} had ${mergeResult.failures.size()} failure(s); see warnings above."
+                        if (project.gradle.taskGraph.allTasks.any { it.name == "generateAllPatchedSrc" }) {
+                            // Under generateAllPatchedSrc, swallow so dependent downstream-version
+                            // tasks still run. Per-rel containment in the engine ensures
+                            // unrelated files in those versions still merge correctly.
+                            logger.warn("[patch-${moduleName}] " + summary)
+                        } else {
+                            throw new org.gradle.api.GradleException(summary)
+                        }
                     }
-                    originMap = null
                 }
             }
 

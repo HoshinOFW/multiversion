@@ -30,7 +30,7 @@ pluginManagement {
 }
 
 plugins {
-    id "com.github.hoshinofw.multiversion.multiversion-settings" version "0.6.0"
+    id "com.github.hoshinofw.multiversion.multiversion-settings" version "0.6.1"
 }
 
 multiversionModules {
@@ -45,7 +45,7 @@ Then apply the main plugin in the root `build.gradle`. The annotations `compileO
 
 ```groovy
 plugins {
-    id "com.github.hoshinofw.multiversion.multiversion" version "0.6.0"
+    id "com.github.hoshinofw.multiversion.multiversion" version "0.7.0"
 }
 
 repositories {
@@ -400,6 +400,8 @@ Each matches a live IDE inspection (red error) so violations surface at edit tim
 
 > **IDE caveat — run a full build after adding or removing `@ModifyClass`.** The IDE's per-save incremental updater uses routing produced by the last full build. Adding or removing `@ModifyClass` on a file (creating or dissolving a sibling group) changes the routing, but the IDE won't know about the new group until the next full `generatePatchedJava` / `generateAllPatchedSrc`. The first save cycle after such an annotation change can produce stale patchedSrc for the affected group. **Run a full build whenever you add or remove `@ModifyClass`.** Edits *inside* an already-established group (method bodies, `@OverwriteVersion` / `@ShadowVersion` flips, `@ModifySignature` renames) don't need this — incremental updates handle them.
 
+> **Here be dragons — `@ModifyClass` in the base version is unsupported.** The base (oldest) version has no upstream to modify, so Extensions targeting a same-version Target don't have a well-defined semantic. The engine's base-version update path always writes per-file origin entries for the edited rel; it does not resolve sibling groups or rewrite Extension entries against their Target. Keep cross-name modifiers out of the base version.
+
 ---
 
 ### Resource patching
@@ -548,6 +550,8 @@ The main exception to this is field and method body, which stay stale until a fu
 This is not an issue while you're coding, because method/field removals (and therefore reference viability) are refreshed automatically.
 If you are manually debugging patchedSrc and want to update method/field bodies without a full version refresh, saving the file manually (Usually CTRL + S in IDEA) will refresh bodies.
 
+The base version does not have a patchedSrc Java output (its trueSrc is already the compile source), but it does have an `_originMap.tsv` that is refreshed on save just like every other version.
+
 If you want to manually refresh all patchedSrc across all versions and modules, run the gradle task:
 ```bash
 ./gradlew generateAllPatchedSrc
@@ -563,9 +567,9 @@ An IntelliJ IDEA plugin is available on the JetBrains Marketplace, simply called
 
 - **Error suppression**: Hides false duplicate class errors, uninitialized field warnings on `@ShadowVersion` members, and "missing method body" errors on bodyless stubs whose counterpart exists in a previous version. The remaining quick fix on such stubs is the correct one (add `@ShadowVersion` / `@OverwriteVersion`).
 - **Version navigation**: `Alt+W` / `Alt+S` to jump upstream/downstream. Context-sensitive: navigates the member at cursor, or the class if not on a member. The arrow only appears when a trueSrc version exists in that direction, potentially multiple versions away, and follows `@ModifySignature` rename chains automatically. Replaces the current tab in-place.
-- **All-versions popup**: `Alt+Shift+V` shows every version of the current member or class. Labels display the multiversion annotations declared in that version (`@OverwriteVersion`, `@ShadowVersion`, `@ModifySignature`, `(new)`, `(base)`) using the editor's annotation colour; inherited and absent versions are greyed. Class-level entries show the trueSrc filename per version.
+- **All-versions popup**: `Alt+Shift+V` shows every version of the current member or class. Labels display the multiversion annotations declared in that version (`@OverwriteVersion`, `@ShadowVersion`, `@ModifySignature`, `(new)`, `(base)`) using the editor's annotation colour; inherited and absent versions are greyed. Class-level entries show the trueSrc filename per version. Clicking a row (or pressing Enter) replaces the current tab with the chosen version; Shift+click opens it in a new tab without closing the current one.
 - **Gutter icons**: Up and down arrows appear independently when there is a trueSrc version in that direction at any distance. Click to navigate.
-- **Annotation validation**: Validates `@DeleteMethodsAndFields`, `@ModifySignature`, and other descriptor strings against the actual members in the previous version. Flags missing `@OverwriteVersion`/`@ShadowVersion` on members that exist in the base; the quick fix adds the annotation and its import.
+- **Annotation validation**: Validates `@DeleteMethodsAndFields`, `@ModifySignature`, and other descriptor strings against the actual members in the previous version. Flags missing `@OverwriteVersion`/`@ShadowVersion` on members that exist in the base; the quick fix adds the annotation and its import. Also flags `@OverwriteVersion`/`@ShadowVersion` where no matching upstream member exists at all; the quick fix removes the offending annotation.
 - **Refactoring**: Renames propagate across all versions and patchedSrc, including descriptor strings in annotations.
 - **Find Usages**: Searches across patchedSrc and remaps results back to trueSrc. The inline "n usages" code lens may show an incorrect count due to an IntelliJ limitation, but clicking it runs the correct search.
 

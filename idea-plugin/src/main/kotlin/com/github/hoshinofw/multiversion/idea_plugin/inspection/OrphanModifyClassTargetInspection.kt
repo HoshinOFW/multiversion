@@ -61,8 +61,7 @@ class OrphanModifyClassTargetInspection : LocalInspectionTool() {
                 if (!targetExistsInPatchedSrc(cls, targetFqn)) {
                     holder.registerProblem(
                         ann,
-                        "@ModifyClass target '$targetFqn' is not visible in this version's patchedSrc. " +
-                        "To create a new class, drop the annotation.",
+                        "@ModifyClass target '$targetFqn' is not visible in this version's patchedSrc. ",
                         ProblemHighlightType.GENERIC_ERROR,
                     )
                 }

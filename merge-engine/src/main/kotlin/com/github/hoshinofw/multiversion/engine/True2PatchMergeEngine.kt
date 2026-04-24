@@ -49,25 +49,34 @@ internal object True2PatchMergeEngine {
         originMap: OriginMap?,
         baseOriginMap: OriginMap? = null,
         baseRouting: ClassRoutingMap? = null,
-    ) {
-        if (!currentSrcDir.exists()) return
+        originMapFile: File? = null,
+    ): List<MergeFailure> {
+        val failures = mutableListOf<MergeFailure>()
+        if (!currentSrcDir.exists()) return failures
 
         // Pre-merge: identify @ModifyClass siblings, validate contracts, produce virtual CUs.
+        // preMerge is itself resilient (per-target / per-file isolation); drain its failures.
         val preMerge = try {
-            ModifyClassPreMerge.preMerge(currentSrcDir, baseDir)
-        } catch (e: MergeException) {
-            throw e
-        } catch (e: Exception) {
-            throw MergeException("@ModifyClass pre-merge failed: ${e.message}", e)
+            ModifyClassPreMerge.preMerge(currentSrcDir, baseDir, versionIdx)
+        } catch (e: Throwable) {
+            failures += MergeFailure("<pre-merge>", versionIdx, MergeFailure.Phase.PRE_MERGE, e)
+            ModifyClassPreMerge.Result(emptyMap(), ClassRoutingMap())
         }
+        failures += preMerge.failures
         val routing = preMerge.routing
         val virtualTargets = preMerge.virtualTargets
+        val failedTargetRels = preMerge.failedTargetRels
 
         currentSrcDir.walkTopDown().filter { it.name.endsWith(".java") }.forEach { currentFile ->
             val rel = PathUtil.relativize(currentSrcDir, currentFile)
             // Modifier files (including the target rel when it is a sibling) are handled
             // by the virtual-target phase below.
             if (routing.isModifier(rel)) return@forEach
+            // Siblings of a failed @ModifyClass group are skipped here so they don't fall
+            // through and get processed as plain non-routed files (which would silently
+            // produce wrong output). They're already accounted for in [failures] via the
+            // pre-merge containment.
+            if (rel in failedTargetRels) return@forEach
 
             val outFile = File(patchedOutDir, rel)
             if (!outFile.exists()) return@forEach
@@ -81,10 +90,8 @@ internal object True2PatchMergeEngine {
                     versionIdx, baseVersionIdx,
                     originMap, baseOriginMap,
                 )
-            } catch (e: MergeException) {
-                throw e
-            } catch (e: Exception) {
-                throw MergeException("MergeEngine failed merging $rel: ${e.message}", e)
+            } catch (e: Throwable) {
+                failures += MergeFailure(rel, versionIdx, MergeFailure.Phase.PLAIN_FILE, e)
             }
         }
 
@@ -98,26 +105,43 @@ internal object True2PatchMergeEngine {
                     versionIdx, baseVersionIdx,
                     originMap, baseOriginMap,
                 )
-            } catch (e: MergeException) {
-                throw e
-            } catch (e: Exception) {
-                throw MergeException("MergeEngine failed merging virtual target $targetRel: ${e.message}", e)
+            } catch (e: Throwable) {
+                failures += MergeFailure(targetRel, versionIdx, MergeFailure.Phase.VIRTUAL_TARGET, e)
             }
         }
 
-        // Clean up orphan modifier copies (files at modifier rel paths that are not their own target).
+        // Clean up orphan modifier copies (files at modifier rel paths that are not their own
+        // target). Per-file try/catch-collect: a delete failure (e.g. AV-locked file on Windows)
+        // shouldn't abort the rest of the loop or the sidecar/originMap writes that follow.
         for (modifierRel in routing.modifiers()) {
             val target = routing.getTarget(modifierRel)
-            if (target != null && target != modifierRel) File(patchedOutDir, modifierRel).delete()
+            if (target != null && target != modifierRel) {
+                try {
+                    File(patchedOutDir, modifierRel).delete()
+                } catch (e: Throwable) {
+                    failures += MergeFailure(modifierRel, versionIdx, MergeFailure.Phase.SIDECAR_IO, e)
+                }
+            }
         }
 
         // Emit per-target routing sidecars next to merged outputs, then prune any stale sidecars
-        // left from a prior generation.
-        routing.writeSidecars(patchedOutDir)
-        routing.pruneStaleSidecars(patchedOutDir)
+        // left from a prior generation. Each step has its own try/catch so a sidecar I/O failure
+        // doesn't lose the merge work.
+        try {
+            routing.writeSidecars(patchedOutDir)
+        } catch (e: Throwable) {
+            failures += MergeFailure("<routing-sidecars>", versionIdx, MergeFailure.Phase.SIDECAR_IO, e)
+        }
+        try {
+            routing.pruneStaleSidecars(patchedOutDir)
+        } catch (e: Throwable) {
+            failures += MergeFailure("<routing-sidecars-prune>", versionIdx, MergeFailure.Phase.SIDECAR_IO, e)
+        }
 
         // Generate member-level origin entries for files NOT in currentSrcDir
-        // (inherited verbatim from base, only have file-level entries so far).
+        // (inherited verbatim from base, only have file-level entries so far). Per-file
+        // try/catch-collect: a single unparseable inherited file no longer silently
+        // disappears (was previously a bare empty `catch`).
         if (originMap != null) {
             patchedOutDir.walkTopDown().filter { it.name.endsWith(".java") }.forEach { outFile ->
                 val rel = PathUtil.relativize(patchedOutDir, outFile)
@@ -129,9 +153,27 @@ internal object True2PatchMergeEngine {
                     val cu = parser.parse(content).result.orElse(null) ?: return@forEach
                     val cls = cu.findFirst(TypeDeclaration::class.java).orElse(null) ?: return@forEach
                     collectInheritedOrigins(cls, rel, baseVersionIdx, baseOriginMap, originMap)
-                } catch (_: Exception) { }
+                } catch (e: Throwable) {
+                    failures += MergeFailure(rel, versionIdx, MergeFailure.Phase.INHERITED_ORIGIN, e)
+                }
             }
         }
+
+        // Engine-owned origin map persistence. When [originMapFile] is provided, write the
+        // (possibly partial) map atomically as the final step. Co-locates origin-map I/O with
+        // the existing sidecar I/O above, making this method the single owner of all
+        // per-version artefact writes. Callers (Gradle, MergeEngine.versionUpdatePatchedSrc)
+        // no longer touch [originMapFile] directly.
+        if (originMap != null && originMapFile != null) {
+            try {
+                originMapFile.parentFile?.mkdirs()
+                originMap.toFileAtomic(originMapFile)
+            } catch (e: Throwable) {
+                failures += MergeFailure(originMapFile.name, versionIdx, MergeFailure.Phase.SIDECAR_IO, e)
+            }
+        }
+
+        return failures.toList()
     }
 
     /**

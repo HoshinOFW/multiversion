@@ -21,7 +21,7 @@ public class ModTemplateMod {
 
     }
 
-    public static String boo() {
+    public static String boo(Long i) {
         return "boo";
     }
 

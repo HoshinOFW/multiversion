@@ -1,5 +1,11 @@
 ### Observed Bugs:
 
+- OnSaveListener and PsiStructureListener probably skip all actions when the event happens in the base version.
+  - But this does not take into account that the base version still has an originMap that needs updating.
+  - So this is incorrect. The merge api should still be called, and it is the merge api that should see that it is the base version and skip patchedSrc while updating originMap.
+  - Of course IDE caches are then properly updated.
+- The MissingOriginalAnnotationInspection at the moment does not check if the member has annotations the original did not have
+  - There could be an argument in favor of making this a feature instead of a bug, but I am leaning more towards the inspection appearing whenever there is a mismatch.
 - MissingOriginalAnnotationsInspection is not working for base version.
   - I guess it needs to be split into 2 inspection:
     - 1 for @ShadowVersion and OverwriteVersion that does what the "match to other versions" quick fix does but "match to declaration" instead.
@@ -20,14 +26,24 @@
 
 ### Test:
 - Everything IDE and merge after additions and refactors.
+  - New merge failure system especially needs testing:
+    - Single-version Gradle build (`:1.21.1:common:generatePatchedJava` direct) with one bad file: task fails red, partial `_originMap.tsv` has all other files' entries, broken file untouched on disk.
+    - `generateAllPatchedSrc` with one bad file in v1: v1 logs failures but doesn't throw, v2's task runs and reads v1's partial map as base, v2/Goo merges correctly (byte-equivalent to a clean build).
+    - IDE save with parse error in Foo: one balloon `"Multiversion merge: N file(s) failed across M version(s)"`, idea.log shows v0 PLAIN_FILE failure + SKIPPED_UPSTREAM_FAILED for Foo in every downstream version, Goo entries unchanged everywhere.
+    - Cascade scoping: edit Goo to broken state then edit unrelated Foo without fixing Goo. Foo's cascade succeeds end-to-end; Goo stays broken; the two cascades don't interact.
+    - Sibling-group resilience: break group A's validation in v1; group B's Target still merges, A's siblings skipped from plain-file loop (no silent wrong output), B's `.routing` sidecar written, A's stays at last good state.
+    - Sibling-group cascade containment: break a Sibling of group A in v1, save. SKIPPED_UPSTREAM_FAILED for group A's Target rel in every downstream; group B in every downstream untouched.
+    - Base-version edit: edit a class in 1.20.1 (no PatchedSrc), save. First downstream picks up in-memory editedContent for the editing rel (not stale on-disk).
+    - Extension cascade: edit `FooExt.java` (`@ModifyClass(Foo.class)`), save. Downstream PatchedSrc updates land at the resolved Target rel per version, not at editedRel.
+    - Cache invalidation across cascade steps: after a successful Extension cascade, Alt+Shift+V popup reflects new Target locations in downstream versions immediately (no IDE restart).
+    - Re-run after fix: fix the broken file from any of the above, re-run. Previously-successful files re-merge identically; previously-broken file now succeeds; everything coherent.
+    - Happy-path regression: clean build, diff `_originMap.tsv` and PatchedSrc byte-for-byte against pre-refactor reference; should be identical.
 - Navigation in mod template to see if bugs got fixed
 - Test refactoring support for all classes.
 - Test class types such as record, interface, etc. Make sure they work properly
 - Test rename refactor for constructors.
 
 ### Engine + Annotations:
-- Memoization for member walking via OriginMap.
-
 - Add support for inner classes.
 - Add support for records.
 - Add enum constants to merge support.
@@ -40,7 +56,6 @@
     - This way the developer has some control over routing.
   - TBD: How does ordering work for walking up and down using keybinds/buttons when there's multiple extension classes in a single version?
 
-
 ### Gradle:
 - Add more configuration:
   - mixin config path + adding more mixin configs.
@@ -51,13 +66,8 @@
 ### IDE:
 
 - Remove ambiguity between absent member and deleted member. Different entries messages in the alt shift v popup.
-- Add color coding for the alt shift v popup.
-- @OverwriteVersion and @ShadowVersion but can't resolve the upstream member that is being shadowed/overwritten should show an error
-- Walking upstream and downstream shouldn't necessarily find the member if it is @ShadowVersion. 
-  - By default, it should be only @OverwriteVersion. Maybe the Shift + Alt + V popup can have a little section for IDE navigation configuration
-    - Another option should be which member types (Type is their annotations in that version) should be shown.
-      - User should be able to say: "I only wanna see new member bodies, no @ShadowVersion". Same for other annotations
-    - 
+- @OverwriteVersion and @ShadowVersion but can't resolve the upstream member that is being shadowed/overwritten should show an error. This is a new inspection.
+  - CannotFindTargetMemberInspection. Uses existing helpers to check if member exists current version patchedSrc.
 - Examine more ways the IDE currently routes through both trueSrc and patchedSrc, while it should only do patchedSrc then remap
   - Essentially replicate what was already done for findUsages but for other IDE features.
 - IDE should refresh the visual file tree after a file is added/removed from patchedSrc.
@@ -66,36 +76,7 @@
   - @ModifySignature has a widget next to it that appears when there are existing references to the old signature
   - A dialogue should open up with a warning and an option to refactor.
   - Clicking refactor should open the same menu as clicking Safe Delete usually does. It lists the references across files (across versions in this codebase) and lets you edit them.
-  - Maybe there could also be some other button to attempt the refactor automatically. It would change all references to the old method in downstream methods to the new method signature. 
-
-- IDE: `MissingOriginalAnnotationsInspection` — extend to method parameter annotations.
-  - **Motivation**: parameter annotations (`@NotNull String s`, `@Nullable Integer i`) are part of a method's contract. The inspection currently covers the member's modifier-list and its declared type (field type / method return type), but not parameter types. A shadow that silently drops `@NotNull` from a parameter — or transposes it to a different parameter — won't fire the inspection. False negatives on real contract drift.
-  - **Why not already done**: parameters are positional. `@NotNull` on param 0 is a different claim from `@NotNull` on param 1, so the current flattened-set comparison would treat `(@NotNull String s, Integer i)` and `(String s, @NotNull Integer i)` as identical. Catching that needs per-index compare + per-index fix application.
-  - **Scope**: 
-    - `AnnotationInfo` gains a position tag (`Modifier` | `DeclaredType` | `Param(index)`).
-    - `collectTransferableAnnotations` also walks `parameterList.parameters[i].modifierList.annotations` and `.typeElement.annotations` per index.
-    - Comparison runs per position: missing = canonical's set at position P minus current's set at position P.
-    - "Match to others" quick fix targets the PsiParameter at the right index (not the member's modifier list).
-    - "Make other versions match" quick fix similarly strips / adds on the right parameter.
-    - If the canonical's param count differs from the current's (e.g. after a dropped param), bail — per-index comparison is meaningless. Fall through to the existing modifier-list + return-type checks only.
-  - **Estimated size**: ~50 lines in the inspection + small extension to `AnnotationInfo`. No engine changes needed.
-
-### IDE tech debt: migrate to centralized upstream-member walker
-
-Everything in the plugin that looks up "the same member / class in some other version" should go through the engine's `OriginNavigation` walkers + the IDE's `MemberLookup` helper. The walker is extension / sibling-aware (routing), rename-chain aware, and takes a `Set<OriginFlag>` filter so callers can ask for the exact semantics they need (empty = existence, `SIGNATURE_FLAGS` = canonical declaration, `DECLARATION_FLAGS` = real body, `ANY_DECLARATION_FLAGS` = anything trueSrc-declared).
-
-Already migrated:
-- `MissingExplicitAnnotationInspection` — uses `MemberLookup.memberExistsUpstream` (empty filter).
-- `MissingOriginalAnnotationsInspection` — uses `MemberLookup.findSignatureAnchor` (`SIGNATURE_FLAGS`) and `MemberLookup.findLifetimeDeclarations` (`ANY_DECLARATION_FLAGS`).
-- Gutter arrows / Alt+Shift+W/S — use `DECLARATION_FLAGS`.
-- Alt+Shift+V popup — uses `allMemberVersions` (unfiltered, shows all versions).
-
-Still on the naive `findPreviousVersionClass` (not routing-aware; picks same-rel file even when the upstream version's declaration lives in a different-named extension):
-- `PriorVersionMemberHighlightFilter` — suppresses false "missing body" / "must be initialised" errors. Should ask the walker "is this member declared anywhere upstream" instead of opening an arbitrary upstream file and reading it.
-- `DescriptorReferences` — descriptor string references inside `@DeleteMethodsAndFields` / `@ModifySignature`. Uses the previous-version class to resolve descriptor targets; would want the walker so it handles extensions and rename chains correctly.
-- `ModifySignatureInspection` — checks "does the new name collide with an existing member in the previous version". Same story.
-
-When migrating, use `MemberLookup.memberExistsUpstream` for yes/no questions and `findSignatureAnchor` when you actually need a PSI to read from. If the call site needs a _class_ rather than a member, a parallel class-level helper in `MemberLookup` should be added (not yet needed).
+  - Maybe there could also be some other button to attempt the refactor automatically. It would change all references to the old method in downstream methods to the new method signature.
 
 ---
 
@@ -165,3 +146,8 @@ Redirect patchedSrc errors to trueSrc.
   - Maybe there can be a button to press to do a full version code analysis (which would refresh patchedSrc, and run a code analysis there).
   - There can be a more automatic system that on filesave finds references to the class (the type and its members) and runs analysis on all files.
     - This seems computationally expensive and not worth it
+
+### Ambitious #6
+Do the version navigation truly in-place, in a way that bypasses the limitation of 1 editor open per file max.
+This would reduce some situations where you have multiple versions already open, so navigation moves your around and closes tabs you wouldn't expect to.
+This is heavily messing with normal IDE stuff so that's why it is in ambitious.

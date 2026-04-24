@@ -7,11 +7,9 @@ import com.github.hoshinofw.multiversion.OverwriteVersion;
 @ModifyClass(ModTemplateMod.class)
 @DeleteMethodsAndFields({"TBDeleted"})
 public class ModTemplateModExtension {
-
-
-
+    
     @OverwriteVersion
-    public static String boo() {
+    public static String boo(Long i) {
         return "boo2";
     }
 

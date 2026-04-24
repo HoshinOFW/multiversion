@@ -73,37 +73,71 @@ internal object ModifyClassPreMerge {
     data class Result(
         val virtualTargets: Map<String, VirtualTarget>,
         val routing: ClassRoutingMap,
+        /**
+         * Per-target / per-file validation failures collected during pre-merge. Drained by
+         * [True2PatchMergeEngine.processVersion] into its own failure list. Empty when the
+         * pre-merge had no validation issues.
+         */
+        val failures: List<MergeFailure> = emptyList(),
+        /**
+         * Target rels whose sibling-group validation failed. [True2PatchMergeEngine.processVersion]
+         * skips these in the plain-file loop so a broken group's siblings don't fall through and
+         * produce silent wrong output (they would otherwise look like plain non-routed files).
+         */
+        val failedTargetRels: Set<String> = emptySet(),
     )
 
     /**
-     * Runs the pre-merge. Throws [MergeException] on any contract violation.
+     * Runs the pre-merge. Resilient: per-target / per-file validation failures are collected
+     * into [Result.failures] and excluded from [Result.virtualTargets] / [Result.routing] /
+     * [Result.failedTargetRels]; other groups still validate and produce virtual targets.
      * [baseDir] is the accumulated previous-version patchedSrc (for orphan / inner-class
-     * target detection); [currentSrcDir] is this version's trueSrc.
+     * target detection); [currentSrcDir] is this version's trueSrc; [versionIdx] is plumbed
+     * into emitted [MergeFailure] entries.
      */
-    fun preMerge(currentSrcDir: File, baseDir: File): Result {
+    fun preMerge(currentSrcDir: File, baseDir: File, versionIdx: Int): Result {
         if (!currentSrcDir.exists()) return Result(emptyMap(), ClassRoutingMap())
 
         val parsed = parseAll(currentSrcDir)
+        val failures = mutableListOf<MergeFailure>()
+        val placementOk = mutableListOf<ParsedFile>()
         // Inner-class @ModifyClass placement is checked here (was previously inline during
         // parsing). parseAll itself stays validation-free so synthesizeRoutingFromTrueSrc can
-        // reuse it.
-        parsed.forEach { validateModifyClassPlacement(it.rel, it.cu) }
-        val modifiers = identifyModifiers(parsed, currentSrcDir, baseDir)
+        // reuse it. Per-file try/catch-collect: a bad placement on one file no longer kills
+        // the rest of the pre-merge.
+        for (p in parsed) {
+            try {
+                validateModifyClassPlacement(p.rel, p.cu)
+                placementOk += p
+            } catch (e: Throwable) {
+                failures += MergeFailure(p.rel, versionIdx, MergeFailure.Phase.PRE_MERGE, e)
+            }
+        }
+        val modifiers = identifyModifiers(placementOk, currentSrcDir, baseDir, versionIdx, failures)
 
         val grouped = modifiers.groupBy { it.targetRel }
 
-        for ((targetRel, members) in grouped) validateGroup(targetRel, members)
-
-        val virtualTargets = grouped.mapValues { (targetRel, members) ->
-            buildVirtualTarget(targetRel, members)
+        val failedTargetRels = mutableSetOf<String>()
+        for ((targetRel, members) in grouped) {
+            try {
+                validateGroup(targetRel, members)
+            } catch (e: Throwable) {
+                failures += MergeFailure(targetRel, versionIdx, MergeFailure.Phase.PRE_MERGE, e)
+                failedTargetRels += targetRel
+            }
         }
+
+        val virtualTargets = grouped
+            .filter { it.key !in failedTargetRels }
+            .mapValues { (targetRel, members) -> buildVirtualTarget(targetRel, members) }
 
         val routing = ClassRoutingMap()
         for ((targetRel, members) in grouped) {
+            if (targetRel in failedTargetRels) continue
             members.forEach { routing.addRoute(targetRel, it.sourceRel) }
         }
 
-        return Result(virtualTargets, routing)
+        return Result(virtualTargets, routing, failures.toList(), failedTargetRels)
     }
 
     /**
@@ -250,10 +284,22 @@ internal object ModifyClassPreMerge {
         parsed: List<ParsedFile>,
         currentSrcDir: File,
         baseDir: File,
+        versionIdx: Int,
+        failures: MutableList<MergeFailure>,
     ): List<ModifierInfo> {
-        val explicits = parsed.filter { it.hasExplicitModifyClass }.map { p ->
-            val targetRel = resolveTargetRel(p, currentSrcDir, baseDir)
-            ModifierInfo(p.rel, p.cu, p.topLevelType, targetRel, hasExplicitModifyClass = true)
+        // Per-file try/catch-collect: a bad @ModifyClass(...) placement / orphan / inner-class
+        // target on one file no longer kills the rest. Files that fail target resolution are
+        // dropped from the modifier list and surfaced in [failures]; they fall through to the
+        // plain-file path in processVersion (which may then also fail for them — that's the
+        // acceptable visible failure, not silent wrong output).
+        val explicits = parsed.filter { it.hasExplicitModifyClass }.mapNotNull { p ->
+            try {
+                val targetRel = resolveTargetRel(p, currentSrcDir, baseDir)
+                ModifierInfo(p.rel, p.cu, p.topLevelType, targetRel, hasExplicitModifyClass = true)
+            } catch (e: Throwable) {
+                failures += MergeFailure(p.rel, versionIdx, MergeFailure.Phase.PRE_MERGE, e)
+                null
+            }
         }
 
         // Implicit siblings: files without @ModifyClass that sit at a rel path that some

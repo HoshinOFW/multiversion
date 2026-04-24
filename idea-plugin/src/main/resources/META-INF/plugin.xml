@@ -36,6 +36,12 @@
                          level="ERROR"
                          implementationClass="com.github.hoshinofw.multiversion.idea_plugin.inspection.MissingExplicitAnnotationInspection"/>
         <localInspection language="JAVA"
+                         displayName="@OverwriteVersion/@ShadowVersion target member not found upstream"
+                         groupName="Multiversion"
+                         enabledByDefault="true"
+                         level="ERROR"
+                         implementationClass="com.github.hoshinofw.multiversion.idea_plugin.inspection.CannotFindTargetMemberInspection"/>
+        <localInspection language="JAVA"
                          displayName="@ShadowVersion member has a body"
                          groupName="Multiversion"
                          enabledByDefault="true"

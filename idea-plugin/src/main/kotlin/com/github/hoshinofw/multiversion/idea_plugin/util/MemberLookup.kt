@@ -1,15 +1,19 @@
 package com.github.hoshinofw.multiversion.idea_plugin.util
 
+import com.github.hoshinofw.multiversion.engine.InitTarget
+import com.github.hoshinofw.multiversion.engine.MemberDescriptor
 import com.github.hoshinofw.multiversion.engine.OriginFlag
 import com.github.hoshinofw.multiversion.engine.OriginNavigation
 import com.github.hoshinofw.multiversion.engine.OriginNavigation.TrueSrcMemberHit
 import com.github.hoshinofw.multiversion.engine.OriginResolver
+import com.github.hoshinofw.multiversion.engine.ParsedDescriptor
 import com.github.hoshinofw.multiversion.engine.PathUtil
 import com.github.hoshinofw.multiversion.idea_plugin.engine.MergeEngineCache
 import com.github.hoshinofw.multiversion.idea_plugin.navigation.util.NavigationContext
 import com.github.hoshinofw.multiversion.idea_plugin.navigation.util.buildNavigationContext
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.psi.PsiClass
 import com.intellij.psi.PsiFile
 import com.intellij.psi.PsiManager
 import com.intellij.psi.PsiMember
@@ -152,6 +156,122 @@ object MemberLookup {
         }
 
         return decls
+    }
+
+    /**
+     * Resolves a descriptor string (e.g. `"foo(int,String)"`, `"bar"`, `"init(int)"`) against
+     * the nearest upstream version of [classContext]'s target class, returning the matched
+     * member as an [UpstreamMemberRef] or null if no match.
+     *
+     * Mirrors the old `findPreviousVersionClass + resolveDescriptorInClass` pair but
+     * routing-aware: if [classContext] is a cross-name `@ModifyClass` extension, the lookup
+     * walks the target class's rel, so descriptors inside `@ModifySignature` /
+     * `@DeleteMethodsAndFields` resolve against the right upstream identity.
+     *
+     * The descriptor is only matched in the *immediate* upstream trueSrc version of the
+     * target class — the semantics of those annotations. Returns null if the descriptor
+     * doesn't correspond to any member there (matches `resolveDescriptorInClass`'s null
+     * behavior, which the inspection / reference contributor treat as "invalid").
+     */
+    fun findMemberByDescriptor(classContext: PsiClass, descriptor: String): UpstreamMemberRef? {
+        val file = classContext.containingFile?.virtualFile ?: return null
+        val nav = buildNavigationContext(file) ?: return null
+        val parsed = MemberDescriptor.parseDescriptor(descriptor)
+
+        // Nearest upstream version that has *some* entry for the target class (trueSrc or
+        // inherited). Its origin map carries the member list we match against.
+        val classHit = OriginNavigation.nearestClass(
+            nav.maps, nav.currentIdx, nav.rel,
+            direction = -1,
+        ) ?: return null
+
+        val map = nav.maps.getOrNull(classHit.versionIdx) ?: return null
+        val candidateKeys = map.getMembersForFile(nav.rel).keys
+        val matchedKey = matchDescriptorAgainstKeys(parsed, candidateKeys) ?: return null
+        val flags = map.getMemberFlags(nav.rel, matchedKey)
+        val hit = TrueSrcMemberHit(classHit.versionIdx, matchedKey, flags)
+        return resolveUpstreamRef(classContext.project, nav, hit)
+    }
+
+    /**
+     * Returns the set of origin-map memberKeys declared against [classContext]'s target
+     * class in the nearest upstream trueSrc version, or null if no upstream version of the
+     * class exists. Routing-aware (uses the target rel when [classContext] is a cross-name
+     * `@ModifyClass` extension).
+     *
+     * Callers that just want a yes/no resolution should use [findMemberByDescriptor]; this
+     * entry exists for inspections that need to produce specific error messages based on
+     * the shape of the upstream candidate set (ambiguous overloads, init ambiguity, etc).
+     */
+    fun upstreamMemberKeys(classContext: PsiClass): Set<String>? {
+        val file = classContext.containingFile?.virtualFile ?: return null
+        val nav = buildNavigationContext(file) ?: return null
+        val classHit = OriginNavigation.nearestClass(
+            nav.maps, nav.currentIdx, nav.rel,
+            direction = -1,
+        ) ?: return null
+        val map = nav.maps.getOrNull(classHit.versionIdx) ?: return null
+        return map.getMembersForFile(nav.rel).keys
+    }
+
+    // -------------------------------------------------------------------------
+
+    /**
+     * Matches [parsed] against a set of origin-map memberKeys. Mirrors
+     * `resolveDescriptorInClass` (`MemberMatching.kt`) but operates on key strings rather
+     * than a PsiClass, so it needs no PSI file opens. Handles the `init` constructor /
+     * method / field ambiguity via [MemberDescriptor.resolveInitAmbiguity].
+     */
+    private fun matchDescriptorAgainstKeys(parsed: ParsedDescriptor, keys: Set<String>): String? {
+        if (parsed.name == "init") {
+            val ctorKeys = keys.filter { it.startsWith("<init>(") }
+            val methodKeys = keys.filter {
+                val p = MemberDescriptor.parseDescriptor(it)
+                p.name == "init" && p.params != null
+            }
+            val fieldExists = keys.contains("init")
+            val hasParams = parsed.params != null
+            val ctorMatch = if (hasParams) ctorKeys.find { keyParamsMatch(it, parsed.params!!) } else null
+            val methodMatch = if (hasParams) methodKeys.find { keyParamsMatch(it, parsed.params!!) } else null
+            val resolution = MemberDescriptor.resolveInitAmbiguity(
+                ctorCount = ctorKeys.size,
+                methodCount = methodKeys.size,
+                fieldExists = fieldExists,
+                hasParams = hasParams,
+                ctorMatched = ctorMatch != null,
+                methodMatched = methodMatch != null,
+            )
+            if (resolution.error != null) return null
+            return when (resolution.target) {
+                InitTarget.CONSTRUCTOR -> ctorMatch ?: ctorKeys.firstOrNull()
+                InitTarget.METHOD -> methodMatch ?: methodKeys.firstOrNull()
+                else -> null
+            }
+        }
+
+        if (parsed.params == null) {
+            // Bare name: one method, or one field. Matches resolveDescriptorInClass's
+            // single-result-only semantics for ambiguous overloads.
+            val nameMatches = keys.filter {
+                val p = MemberDescriptor.parseDescriptor(it)
+                p.name == parsed.name
+            }
+            val methodMatches = nameMatches.filter { it.contains('(') }
+            if (methodMatches.size == 1) return methodMatches[0]
+            if (methodMatches.isEmpty()) return nameMatches.find { !it.contains('(') }
+            return null
+        }
+
+        return keys.find {
+            val p = MemberDescriptor.parseDescriptor(it)
+            p.name == parsed.name && p.params != null &&
+                MemberDescriptor.matchesParams(p.params!!, parsed.params!!)
+        }
+    }
+
+    private fun keyParamsMatch(key: String, expectedParams: List<String>): Boolean {
+        val p = MemberDescriptor.parseDescriptor(key)
+        return p.params != null && MemberDescriptor.matchesParams(p.params!!, expectedParams)
     }
 
     // -------------------------------------------------------------------------

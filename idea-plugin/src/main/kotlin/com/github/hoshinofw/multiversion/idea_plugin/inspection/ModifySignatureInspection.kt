@@ -19,10 +19,7 @@ private fun checkMember(member: PsiMember, holder: ProblemsHolder) {
     val modList = (member as? PsiModifierListOwner)?.modifierList ?: return
     if (!modList.hasAnnotation(MODIFY_SIGNATURE_FQN)) return
 
-    val containingClass = member.containingClass ?: return
-    val prevClass = findPreviousVersionClass(containingClass) ?: return
-
-    checkCollision(member, modList, prevClass, holder)
+    checkCollision(member, modList, holder)
 
     val hasOverwrite = modList.hasAnnotation(OVERWRITE_FQN)
     if (!hasOverwrite && member is PsiMethod && member.body != null) {
@@ -38,23 +35,23 @@ private fun checkMember(member: PsiMember, holder: ProblemsHolder) {
 private fun checkCollision(
     member: PsiMember,
     modList: PsiModifierList,
-    prevClass: PsiClass,
     holder: ProblemsHolder,
 ) {
     val annotation = modList.findAnnotation(MODIFY_SIGNATURE_FQN) ?: return
     val descriptorValue = annotation.findAttributeValue("value") ?: return
     val descriptor = (descriptorValue as? PsiLiteralExpression)?.value as? String ?: return
 
-    // The descriptor points to the OLD member in the previous version.
-    // The member's current name+params is its NEW identity.
-    // Check if the new identity collides with a different member in the previous version.
-    val newIdentityMatch = findMatchingMember(member, prevClass) ?: return
+    val caretClass = member.containingClass ?: return
+    val upstreamKeys = MemberLookup.upstreamMemberKeys(caretClass) ?: return
 
-    // Resolve the descriptor target in the previous version
-    val descriptorTarget = resolveDescriptorInClass(descriptor, prevClass)
+    // The member's current name+params is its NEW identity. A collision exists iff the new
+    // identity's memberKey already exists upstream AND it's a different member from the one
+    // the descriptor (OLD identity) resolves to.
+    val newIdentityKey = memberKey(member) ?: return
+    if (newIdentityKey !in upstreamKeys) return
 
-    // If the new identity matches the same member as the descriptor target, no collision
-    if (descriptorTarget != null && descriptorTarget.isEquivalentTo(newIdentityMatch)) return
+    val descriptorRef = MemberLookup.findMemberByDescriptor(caretClass, descriptor)
+    if (descriptorRef?.memberKey == newIdentityKey) return
 
     val memberName = when (member) {
         is PsiMethod -> if (member.isConstructor) "<init>" else member.name

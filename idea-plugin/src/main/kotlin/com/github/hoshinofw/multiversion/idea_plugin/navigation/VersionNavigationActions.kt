@@ -9,7 +9,6 @@ import com.intellij.openapi.actionSystem.CommonDataKeys
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
-import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.fileEditor.ex.FileEditorManagerEx
 import com.intellij.openapi.fileEditor.impl.FileEditorOpenOptions
 import com.intellij.openapi.project.DumbAware
@@ -34,20 +33,22 @@ fun resolveNavigationContext(psiFile: PsiFile, offset: Int): PsiElement? {
 /**
  * Navigates to [targetElement] in-place: saves the current document,
  * opens the target file at the element's declaration, and closes the old tab.
- * Uses tab-index preservation to avoid flicker from tab rearrangement.
+ * When [keepOriginTab] is true, the current tab is preserved and the target opens
+ * in an additional tab (used by Shift+click in the Alt+Shift+V popup).
  */
-fun navigateInPlace(project: Project, editor: Editor, targetElement: PsiElement) {
+fun navigateInPlace(project: Project, editor: Editor, targetElement: PsiElement, keepOriginTab: Boolean = false) {
     val targetVf = targetElement.containingFile?.virtualFile ?: return
     val targetOffset = (targetElement as? PsiNameIdentifierOwner)?.nameIdentifier?.textOffset
         ?: targetElement.textOffset
-    navigateInPlace(project, editor, targetVf, targetOffset)
+    navigateInPlace(project, editor, targetVf, targetOffset, keepOriginTab)
 }
 
 /**
  * Navigates to [targetVf] at [targetOffset] in-place, replacing the current tab.
  * Opens the new file at the same tab index as the old file to prevent visual flicker.
+ * When [keepOriginTab] is true, the current tab is preserved.
  */
-fun navigateInPlace(project: Project, editor: Editor, targetVf: VirtualFile, targetOffset: Int) {
+fun navigateInPlace(project: Project, editor: Editor, targetVf: VirtualFile, targetOffset: Int, keepOriginTab: Boolean = false) {
     val currentVf = editor.virtualFile ?: return
     if (targetVf == currentVf) {
         editor.caretModel.moveToOffset(targetOffset)
@@ -56,29 +57,41 @@ fun navigateInPlace(project: Project, editor: Editor, targetVf: VirtualFile, tar
 
     FileDocumentManager.getInstance().saveDocument(editor.document)
 
-    val fem = FileEditorManager.getInstance(project) as? FileEditorManagerEx
-    if (fem != null) {
-        val window = fem.currentWindow
-        val files = window?.fileList
-        val tabIndex = files?.indexOfFirst { it == currentVf } ?: -1
+    // Both branches route opens exclusively through FileEditorManagerEx.openFile(..., window = window, ...)
+    // and position the caret directly on the resulting editor. We never call
+    // OpenFileDescriptor.navigate / navigateInEditor: those can round-trip through
+    // FileEditorManager.openTextEditor which is free to route the open into any project's
+    // window that has the target virtualFile in scope — which surfaces as "a new IntelliJ
+    // window appeared".
+    val fem = FileEditorManager.getInstance(project) as? FileEditorManagerEx ?: return
+    val window = fem.currentWindow ?: return
 
-        if (tabIndex >= 0 && window != null) {
-            window.closeFile(currentVf)
-            fem.openFile(
-                file = targetVf,
-                window = window,
-                options = FileEditorOpenOptions(
-                    index = tabIndex,
-                    requestFocus = true,
-                )
-            )
-            OpenFileDescriptor(project, targetVf, targetOffset).navigate(true)
-            return
+    val originTabIndex = window.fileList.indexOfFirst { it == currentVf }.takeIf { it >= 0 }
+
+    if (keepOriginTab) {
+        // Insert the new tab immediately to the right of the origin. Origin tab stays.
+        val options = if (originTabIndex != null) {
+            FileEditorOpenOptions(index = originTabIndex + 1, requestFocus = true)
+        } else {
+            FileEditorOpenOptions(requestFocus = true)
         }
+        fem.openFile(file = targetVf, window = window, options = options)
+    } else {
+        // Close the origin tab, then open the target in the slot the origin occupied.
+        if (originTabIndex != null) window.closeFile(currentVf)
+        val options = if (originTabIndex != null) {
+            FileEditorOpenOptions(index = originTabIndex, requestFocus = true)
+        } else {
+            FileEditorOpenOptions(requestFocus = true)
+        }
+        fem.openFile(file = targetVf, window = window, options = options)
     }
 
-    OpenFileDescriptor(project, targetVf, targetOffset).navigate(true)
-    FileEditorManager.getInstance(project).closeFile(currentVf)
+    val newEditor = fem.selectedTextEditor
+    if (newEditor?.virtualFile == targetVf) {
+        newEditor.caretModel.moveToOffset(targetOffset)
+        newEditor.scrollingModel.scrollToCaret(com.intellij.openapi.editor.ScrollType.CENTER)
+    }
 }
 
 // -- Actions -------------------------------------------------------------------

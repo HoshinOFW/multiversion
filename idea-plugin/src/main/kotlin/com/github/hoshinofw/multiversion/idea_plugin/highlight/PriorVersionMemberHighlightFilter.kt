@@ -1,8 +1,7 @@
 package com.github.hoshinofw.multiversion.idea_plugin.highlight
 
+import com.github.hoshinofw.multiversion.idea_plugin.util.MemberLookup
 import com.github.hoshinofw.multiversion.idea_plugin.util.SHADOW_FQN
-import com.github.hoshinofw.multiversion.idea_plugin.util.findMatchingMember
-import com.github.hoshinofw.multiversion.idea_plugin.util.findPreviousVersionClass
 import com.github.hoshinofw.multiversion.idea_plugin.util.isMultiversionProject
 import com.intellij.codeInsight.daemon.impl.HighlightInfo
 import com.intellij.codeInsight.daemon.impl.HighlightInfoFilter
@@ -35,13 +34,11 @@ class PriorVersionMemberHighlightFilter : HighlightInfoFilter {
             val method = PsiTreeUtil.getParentOfType(element, PsiMethod::class.java, false)
                 ?: return true
             if (method.hasAnnotation(SHADOW_FQN)) return false
-            // Also suppress when the same member exists in a previous version's class.
-            // The "Member found in original class" inspection will fire and offer the
-            // correct quick fix (add @ShadowVersion / @OverwriteVersion); showing the
-            // generic "add body / declare abstract" fix alongside it is confusing.
-            val containingClass = method.containingClass ?: return true
-            val prevClass = findPreviousVersionClass(containingClass) ?: return true
-            return findMatchingMember(method, prevClass) == null
+            // Also suppress when the same member exists in any upstream version. The
+            // "Member found in original class" inspection will fire and offer the correct
+            // quick fix (add @ShadowVersion / @OverwriteVersion); showing the generic
+            // "add body / declare abstract" fix alongside it is confusing.
+            return !MemberLookup.memberExistsUpstream(method)
         }
 
         return true
@@ -66,12 +63,10 @@ class PriorVersionMemberHighlightFilter : HighlightInfoFilter {
         return isShadowOrPreviousVersionField(field)
     }
 
-    /** @ShadowVersion check first (fast), then previous-version lookup (slower). */
+    /** @ShadowVersion check first (cheapest), then engine existence check upstream. */
     private fun isShadowOrPreviousVersionField(field: PsiField): Boolean {
         if (field.hasAnnotation(SHADOW_FQN)) return true
-        val containingClass = field.containingClass ?: return false
-        val prevClass = findPreviousVersionClass(containingClass) ?: return false
-        return findMatchingMember(field, prevClass) != null
+        return MemberLookup.memberExistsUpstream(field)
     }
 
     /**
