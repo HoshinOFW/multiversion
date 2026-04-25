@@ -30,7 +30,7 @@ pluginManagement {
 }
 
 plugins {
-    id "com.github.hoshinofw.multiversion.multiversion-settings" version "0.6.1"
+    id "com.github.hoshinofw.multiversion.multiversion-settings" version "0.6.0"
 }
 
 multiversionModules {
